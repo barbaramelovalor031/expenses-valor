@@ -6,6 +6,8 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import Index from "./pages/Index";
 import Rippling from "./pages/Rippling";
+import MichaelCard from "./pages/MichaelCard";
+import UberPage from "./pages/UberPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -20,6 +22,8 @@ const App = () => (
           <Route path="/" element={<Navigate to="/credit-card" replace />} />
           <Route path="/credit-card" element={<Layout><Index /></Layout>} />
           <Route path="/rippling" element={<Layout><Rippling /></Layout>} />
+          <Route path="/michael-card" element={<Layout><MichaelCard /></Layout>} />
+          <Route path="/uber" element={<Layout><UberPage /></Layout>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

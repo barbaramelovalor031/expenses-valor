@@ -32,3 +32,23 @@ __pycache__/
 .Python
 *.egg-info/
 .eggs/
+
+# Environment variables
+.env
+backend/.env
+
+# Credentials (NEVER commit these!)
+backend/credentials/
+*.json
+!package.json
+!package-lock.json
+!tsconfig*.json
+!components.json
+
+# Data files (Excel, CSV, etc.)
+*.xlsx
+*.csv
+~$*
+
+# Jupyter notebooks with sensitive data
+*.ipynb

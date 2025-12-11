@@ -11,6 +11,7 @@ export interface Transaction {
   description: string;
   amount: number;
   category?: string;
+  ai_category?: string;
 }
 
 export interface ExtractedInvoice {

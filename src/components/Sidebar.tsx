@@ -1,4 +1,4 @@
-import { CreditCard, Users } from 'lucide-react';
+import { CreditCard, Users, Wallet, Car } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +12,16 @@ const menuItems = [
     name: 'Rippling',
     path: '/rippling',
     icon: Users,
+  },
+  {
+    name: 'Michael Card',
+    path: '/michael-card',
+    icon: Wallet,
+  },
+  {
+    name: 'Uber',
+    path: '/uber',
+    icon: Car,
   },
 ];
 

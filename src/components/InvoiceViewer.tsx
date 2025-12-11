@@ -1,6 +1,6 @@
-import { ExtractedInvoice } from '@/types/invoice';
+import { ExtractedInvoice, Transaction } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
-import { X, Download, Calendar, CreditCard, Receipt, Users } from 'lucide-react';
+import { X, Download, Calendar, CreditCard, Receipt, Users, Sparkles, Loader2, FileSpreadsheet } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -16,31 +16,150 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useState, useMemo } from 'react';
+import { categorizeTransactions, getCategories } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
+
+// Available expense categories
+const EXPENSE_CATEGORIES = [
+  "Airfare",
+  "Board meetings",
+  "Brazil Insurance",
+  "Catering - Event",
+  "Computer Equipment",
+  "Conferences & Seminars",
+  "Delivery and Postage",
+  "Due Diligence - New Deals",
+  "Due Diligence - Portfolio Company",
+  "Gifts",
+  "Ground Transportation - Local",
+  "Ground Transportation - Travel",
+  "IT Subscriptions",
+  "Lodging",
+  "Meals & Entertainment - Local",
+  "Meals & Entertainment - Travel",
+  "Membership Dues",
+  "Miscellaneous",
+  "Office Supplies",
+  "Other - Event",
+  "Pantry Food",
+  "Personal Expenses",
+  "Printing",
+  "Printing - Event",
+  "Rippling Wire Deduction",
+  "Tech/AV - Event",
+  "Telephone/Internet",
+  "Training",
+  "Travel Agent Fees",
+  "Venue - Event",
+  "Wellhub Reimbursement",
+];
+
+// Available cardholders/users (canonical names)
+const AVAILABLE_USERS = [
+  "Scott Sobel",
+  "Clifford Sobel",
+  "John Douglas Smith",
+  "Michael Nicklas",
+  "Paulo Passoni",
+  "Antoine Colaço",
+  "Carlos Costa",
+  "Kelli Spangler",
+];
+
+// Alias mappings for user names (lowercase key -> canonical name)
+const USER_ALIASES: Record<string, string> = {
+  "j.douglas smith": "John Douglas Smith",
+  "j. douglas smith": "John Douglas Smith",
+  "j douglas smith": "John Douglas Smith",
+  "jd smith": "John Douglas Smith",
+  "j.d. smith": "John Douglas Smith",
+  "douglas smith": "John Douglas Smith",
+};
+
+// Helper to find canonical user name (case-insensitive + aliases)
+const getCanonicalUser = (user: string | undefined): string => {
+  if (!user) return '__none__';
+  const lowerUser = user.toLowerCase().trim();
+  
+  // Check aliases first
+  if (USER_ALIASES[lowerUser]) {
+    return USER_ALIASES[lowerUser];
+  }
+  
+  // Then check direct match with canonical names
+  const found = AVAILABLE_USERS.find(u => u.toLowerCase() === lowerUser);
+  return found || user;
+};
 
 interface InvoiceViewerProps {
   invoice: ExtractedInvoice;
   onClose: () => void;
   originalFile?: File;
+  onUpdateTransactions?: (transactions: Transaction[]) => void;
 }
 
-export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerProps) {
+export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransactions }: InvoiceViewerProps) {
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isCategorizing, setIsCategorizing] = useState(false);
   const [selectedUser, setSelectedUser] = useState<string>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [transactions, setTransactions] = useState(invoice.transactions);
+  // Show categories if any transaction already has ai_category OR after categorization
+  const [showCategories, setShowCategories] = useState(() => 
+    invoice.transactions.some(tx => tx.ai_category)
+  );
+  const [selectedDescription, setSelectedDescription] = useState<string | null>(null);
+  const { toast } = useToast();
 
-  // Agrupa transações por cardholder
+  // Groups transactions by cardholder
   const transactionsByCardholder = useMemo(() => {
-    return invoice.transactions.reduce((acc, tx) => {
-      const holder = tx.category || 'Outros';
+    return transactions.reduce((acc, tx) => {
+      const holder = tx.category || 'Others';
       if (!acc[holder]) acc[holder] = [];
       acc[holder].push(tx);
       return acc;
-    }, {} as Record<string, typeof invoice.transactions>);
-  }, [invoice.transactions]);
+    }, {} as Record<string, typeof transactions>);
+  }, [transactions]);
 
   const cardholders = Object.keys(transactionsByCardholder).sort();
 
-  // Calcula totais por usuário
+  // Get unique AI categories from transactions
+  const usedCategories = useMemo(() => {
+    const cats = new Set<string>();
+    transactions.forEach(tx => {
+      if (tx.ai_category) cats.add(tx.ai_category);
+    });
+    return Array.from(cats).sort();
+  }, [transactions]);
+
+  // Count uncategorized
+  const uncategorizedCount = useMemo(() => {
+    return transactions.filter(tx => !tx.ai_category).length;
+  }, [transactions]);
+
+  // Auto-show categories when any transaction has ai_category
+  const hasAnyCategory = useMemo(() => {
+    return transactions.some(tx => tx.ai_category);
+  }, [transactions]);
+
+  // Update showCategories when categories are added
+  if (hasAnyCategory && !showCategories) {
+    setShowCategories(true);
+  }
+
+  // Calculate totals by user
   const totalsByUser = useMemo(() => {
     const totals: Record<string, number> = {};
     for (const [holder, txs] of Object.entries(transactionsByCardholder)) {
@@ -49,22 +168,105 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
     return totals;
   }, [transactionsByCardholder]);
 
-  // Filtra transações baseado no usuário selecionado
+  // Filter transactions based on selected user AND category
   const filteredTransactions = useMemo(() => {
-    if (selectedUser === 'all') {
-      return invoice.transactions;
+    let filtered = transactions;
+    
+    // Filter by user
+    if (selectedUser !== 'all') {
+      filtered = filtered.filter(tx => (tx.category || 'Others') === selectedUser);
     }
-    return transactionsByCardholder[selectedUser] || [];
-  }, [selectedUser, invoice.transactions, transactionsByCardholder]);
+    
+    // Filter by AI category
+    if (selectedCategory === 'uncategorized') {
+      filtered = filtered.filter(tx => !tx.ai_category);
+    } else if (selectedCategory !== 'all') {
+      filtered = filtered.filter(tx => tx.ai_category === selectedCategory);
+    }
+    
+    return filtered;
+  }, [transactions, selectedUser, selectedCategory]);
 
   // Filtered total
   const filteredTotal = useMemo(() => {
     return filteredTransactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
   }, [filteredTransactions]);
 
+  // Handle AI categorization
+  const handleCategorize = async () => {
+    setIsCategorizing(true);
+    try {
+      const result = await categorizeTransactions(transactions.map(tx => ({
+        date: tx.date,
+        description: tx.description,
+        amount: tx.amount,
+        cardholder: tx.category,
+      })));
+
+      if (result.success) {
+        const updatedTransactions = transactions.map((tx, index) => ({
+          ...tx,
+          ai_category: result.transactions[index]?.ai_category || '',
+        }));
+        setTransactions(updatedTransactions);
+        setShowCategories(true);
+        onUpdateTransactions?.(updatedTransactions);
+        
+        toast({
+          title: "Categorization complete!",
+          description: `${result.transactions.filter(t => t.ai_category).length} of ${transactions.length} transactions categorized.`,
+        });
+      }
+    } catch (error) {
+      console.error('Error categorizing:', error);
+      toast({
+        title: "Error",
+        description: "Failed to categorize transactions. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCategorizing(false);
+    }
+  };
+
+  // Handle manual category change
+  const handleCategoryChange = (index: number, category: string) => {
+    const updatedTransactions = [...transactions];
+    const txIndex = transactions.findIndex(t => t === filteredTransactions[index]);
+    if (txIndex !== -1) {
+      // If "__none__" is selected, set to empty string
+      const finalCategory = category === '__none__' ? '' : category;
+      updatedTransactions[txIndex] = {
+        ...updatedTransactions[txIndex],
+        ai_category: finalCategory,
+      };
+      setTransactions(updatedTransactions);
+      onUpdateTransactions?.(updatedTransactions);
+    }
+  };
+
+  // Handle user/cardholder change
+  const handleUserChange = (index: number, newUser: string) => {
+    const updatedTransactions = [...transactions];
+    const txIndex = transactions.findIndex(t => t === filteredTransactions[index]);
+    if (txIndex !== -1) {
+      updatedTransactions[txIndex] = {
+        ...updatedTransactions[txIndex],
+        category: newUser, // category field stores the cardholder
+      };
+      setTransactions(updatedTransactions);
+      onUpdateTransactions?.(updatedTransactions);
+      
+      toast({
+        title: "User updated",
+        description: `Transaction assigned to ${newUser}`,
+      });
+    }
+  };
+
   const handleDownloadExcel = async () => {
     if (!originalFile) {
-      // Fallback para CSV se não tiver o arquivo original
+      // Fallback to CSV if no original file
       handleDownloadCSV();
       return;
     }
@@ -82,7 +284,7 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
       });
 
       if (!response.ok) {
-        throw new Error('Erro ao gerar Excel');
+        throw new Error('Error generating Excel');
       }
 
       const blob = await response.blob();
@@ -92,7 +294,7 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
       link.click();
     } catch (error) {
       console.error('Error downloading Excel:', error);
-      // Fallback para CSV
+      // Fallback to CSV
       handleDownloadCSV();
     } finally {
       setIsDownloading(false);
@@ -100,13 +302,14 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
   };
 
   const handleDownloadCSV = () => {
-    const headers = ['Date', 'Description', 'Category', 'Amount'];
-    const rows = invoice.transactions.map((t) => [
-      t.date,
-      t.description,
-      t.category || '',
-      t.amount.toFixed(2),
-    ]);
+    const headers = showCategories 
+      ? ['Date', 'Description', 'User', 'AI Category', 'Amount']
+      : ['Date', 'Description', 'User', 'Amount'];
+    const rows = transactions.map((t) => 
+      showCategories 
+        ? [t.date, t.description, t.category || '', t.ai_category || '', t.amount.toFixed(2)]
+        : [t.date, t.description, t.category || '', t.amount.toFixed(2)]
+    );
 
     const csvContent = [
       headers.join(','),
@@ -116,8 +319,57 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `${invoice.fileName.replace('.pdf', '')}_extrato.csv`;
+    link.download = `${invoice.fileName.replace('.pdf', '')}_expenses.csv`;
     link.click();
+  };
+
+  const handleDownloadExcelWithCategories = async () => {
+    setIsDownloading(true);
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      
+      // Send transactions with categories to backend
+      const response = await fetch(`${API_URL}/export-excel-with-categories`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          transactions: transactions.map(tx => ({
+            date: tx.date,
+            description: tx.description,
+            cardholder: tx.category,
+            ai_category: tx.ai_category || '',
+            amount: tx.amount,
+          })),
+          filename: invoice.fileName.replace('.pdf', ''),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Error generating Excel');
+      }
+
+      const blob = await response.blob();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${invoice.fileName.replace('.pdf', '')}_with_categories.xlsx`;
+      link.click();
+      
+      toast({
+        title: "Excel exported!",
+        description: "File downloaded with all categories included.",
+      });
+    } catch (error) {
+      console.error('Error downloading Excel with categories:', error);
+      toast({
+        title: "Error",
+        description: "Failed to export Excel. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   return (
@@ -186,16 +438,16 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
         <div className="p-6 overflow-auto max-h-[50vh]">
           {/* Filter and Actions Bar */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 flex-wrap">
               <div className="flex items-center gap-2">
                 <Users className="w-4 h-4 text-muted-foreground" />
                 <Select value={selectedUser} onValueChange={setSelectedUser}>
-                  <SelectTrigger className="w-[200px]">
+                  <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="Filter by user" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">
-                      All users ({invoice.transactions.length})
+                      All users ({transactions.length})
                     </SelectItem>
                     {cardholders.map((holder) => (
                       <SelectItem key={holder} value={holder}>
@@ -205,6 +457,32 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
                   </SelectContent>
                 </Select>
               </div>
+              
+              {/* AI Category Filter - only show when categories are visible */}
+              {showCategories && (
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-purple-500" />
+                  <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                    <SelectTrigger className="w-[220px] border-purple-200 bg-purple-50">
+                      <SelectValue placeholder="Filter by AI category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">
+                        ✓ All categories ({transactions.length})
+                      </SelectItem>
+                      <SelectItem value="uncategorized">
+                        ⚠️ Uncategorized ({uncategorizedCount})
+                      </SelectItem>
+                      {usedCategories.map((cat) => (
+                        <SelectItem key={cat} value={cat}>
+                          {cat} ({transactions.filter(tx => tx.ai_category === cat).length})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              
               <div className="text-sm">
                 <span className="text-muted-foreground">Total: </span>
                 <span className="font-bold text-foreground">
@@ -212,15 +490,43 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
                 </span>
               </div>
             </div>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={handleDownloadExcel}
-              disabled={isDownloading}
-            >
-              <Download className="w-4 h-4" />
-              {isDownloading ? 'Generating...' : 'Download XLSX'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="default" 
+                size="sm" 
+                onClick={handleCategorize}
+                disabled={isCategorizing}
+                className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
+              >
+                {isCategorizing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Sparkles className="w-4 h-4" />
+                )}
+                {isCategorizing ? 'Categorizing...' : 'Categorize with AI'}
+              </Button>
+              {showCategories && (
+                <Button 
+                  variant="default" 
+                  size="sm" 
+                  onClick={handleDownloadExcelWithCategories}
+                  disabled={isDownloading}
+                  className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  {isDownloading ? 'Generating...' : 'Export with Categories'}
+                </Button>
+              )}
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleDownloadExcel}
+                disabled={isDownloading}
+              >
+                <Download className="w-4 h-4" />
+                {isDownloading ? 'Generating...' : 'Download XLSX'}
+              </Button>
+            </div>
           </div>
 
           {/* User Summary Cards */}
@@ -268,28 +574,85 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
                   {selectedUser === 'all' && (
                     <TableHead className="font-semibold">User</TableHead>
                   )}
+                  {showCategories && (
+                    <TableHead className="font-semibold">AI Category</TableHead>
+                  )}
                   <TableHead className="font-semibold text-right">Amount</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredTransactions.map((transaction) => (
+                {filteredTransactions.map((transaction, index) => (
                   <TableRow key={transaction.id} className="hover:bg-muted/30">
                     <TableCell className="text-muted-foreground">
                       {transaction.date}
                     </TableCell>
-                    <TableCell className="font-medium text-foreground">
-                      {transaction.description}
+                    <TableCell className="font-medium text-foreground max-w-[200px]">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={() => setSelectedDescription(transaction.description)}
+                            className="text-left truncate block w-full hover:text-primary cursor-pointer transition-colors"
+                          >
+                            {transaction.description}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[400px]">
+                          <p className="text-sm">Click to see full description</p>
+                        </TooltipContent>
+                      </Tooltip>
                     </TableCell>
                     {selectedUser === 'all' && (
                       <TableCell>
-                        {transaction.category && (
-                          <button 
-                            onClick={() => setSelectedUser(transaction.category!)}
-                            className="px-2 py-1 text-xs rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                          >
-                            {transaction.category}
-                          </button>
-                        )}
+                        <Select 
+                          value={getCanonicalUser(transaction.category)} 
+                          onValueChange={(value) => handleUserChange(index, value === '__none__' ? '' : value)}
+                        >
+                          <SelectTrigger className="w-[160px] h-8 text-xs">
+                            <SelectValue placeholder="Select user..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">
+                              <span className="text-muted-foreground">-- Select --</span>
+                            </SelectItem>
+                            {AVAILABLE_USERS.map((user) => (
+                              <SelectItem key={user} value={user}>
+                                {user}
+                              </SelectItem>
+                            ))}
+                            {/* Also show current user if not in list (case-insensitive check) */}
+                            {transaction.category && !AVAILABLE_USERS.some(u => u.toLowerCase() === transaction.category?.toLowerCase()) && (
+                              <SelectItem value={transaction.category}>
+                                {transaction.category}
+                              </SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                    )}
+                    {showCategories && (
+                      <TableCell>
+                        <Select 
+                          value={transaction.ai_category || '__none__'} 
+                          onValueChange={(value) => handleCategoryChange(index, value)}
+                        >
+                          <SelectTrigger className={`w-[180px] h-8 text-xs ${
+                            transaction.ai_category 
+                              ? 'bg-green-50 border-green-200 text-green-700' 
+                              : 'bg-yellow-50 border-yellow-200 text-yellow-700'
+                          }`}>
+                            <SelectValue placeholder="Select category..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">
+                              <span className="text-muted-foreground">-- Select --</span>
+                            </SelectItem>
+                            {EXPENSE_CATEGORIES.map((cat) => (
+                              <SelectItem key={cat} value={cat}>
+                                {cat}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                     )}
                     <TableCell className="text-right font-medium text-foreground">
@@ -305,6 +668,20 @@ export function InvoiceViewer({ invoice, onClose, originalFile }: InvoiceViewerP
           </div>
         </div>
       </div>
+
+      {/* Description Dialog */}
+      <Dialog open={!!selectedDescription} onOpenChange={() => setSelectedDescription(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Full Description</DialogTitle>
+          </DialogHeader>
+          <div className="mt-4 p-4 rounded-lg bg-muted/50 border border-border">
+            <p className="text-foreground whitespace-pre-wrap break-words">
+              {selectedDescription}
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

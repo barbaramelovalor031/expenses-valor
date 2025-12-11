@@ -2,6 +2,7 @@ import pdfplumber
 import pandas as pd
 import re
 from datetime import datetime
+from services.name_normalizer import normalize_name
 
 def normalize(s: str) -> str:
     return s.replace("–", "-").replace("−", "-").replace("⧫", "").strip()
@@ -157,12 +158,17 @@ def extract_amex(pdf_file) -> dict:
     # Flatten to return single list with cardholder
     transactions = []
     for cardholder, txs in all_cardholders.items():
+        # Normalize the cardholder name
+        normalized_cardholder = normalize_name(cardholder)
         for tx in txs:
-            tx["cardholder"] = cardholder
+            tx["cardholder"] = normalized_cardholder
             transactions.append(tx)
+
+    # Get unique normalized cardholders
+    normalized_cardholders = list(set(normalize_name(ch) for ch in all_cardholders.keys()))
 
     return {
         "card_type": "amex",
         "transactions": transactions,
-        "cardholders": list(all_cardholders.keys())
+        "cardholders": normalized_cardholders
     }
