@@ -22,6 +22,8 @@ def get_openai_client():
         if not api_key:
             print("[ERROR] OPENAI_API_KEY environment variable is not set!")
             raise ValueError("OPENAI_API_KEY not configured")
+        # Remove any trailing newlines/whitespace from the API key
+        api_key = api_key.strip()
         print(f"[INFO] Initializing OpenAI client with key: {api_key[:8]}...{api_key[-4:]}")
         _openai_client = OpenAI(api_key=api_key)
     return _openai_client
