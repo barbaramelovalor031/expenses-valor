@@ -8,6 +8,9 @@ import Index from "./pages/Index";
 import Rippling from "./pages/Rippling";
 import MichaelCard from "./pages/MichaelCard";
 import UberPage from "./pages/UberPage";
+import ExpensesYTD from "./pages/ExpensesYTD";
+import RipplingExpensesPage from "./pages/RipplingExpensesPage";
+import TravelDashboard from "./pages/TravelDashboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -22,8 +25,11 @@ const App = () => (
           <Route path="/" element={<Navigate to="/credit-card" replace />} />
           <Route path="/credit-card" element={<Layout><Index /></Layout>} />
           <Route path="/rippling" element={<Layout><Rippling /></Layout>} />
+          <Route path="/rippling-expenses" element={<Layout><RipplingExpensesPage /></Layout>} />
           <Route path="/michael-card" element={<Layout><MichaelCard /></Layout>} />
           <Route path="/uber" element={<Layout><UberPage /></Layout>} />
+          <Route path="/expenses-ytd" element={<ExpensesYTD />} />
+          <Route path="/travel" element={<TravelDashboard />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

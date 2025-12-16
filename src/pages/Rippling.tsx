@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { Users, Upload, FileSpreadsheet, X, Download, Check, AlertCircle, Receipt, Calendar, DollarSign } from 'lucide-react';
+import { Users, Upload, FileSpreadsheet, X, Download, Check, AlertCircle, Receipt, Calendar, DollarSign, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -16,8 +16,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import * as XLSX from 'xlsx';
+import RipplingEmployees from '@/components/RipplingEmployees';
 
 // Employee name mapping: Rippling Name -> { displayName, type }
 const EMPLOYEE_DATA: Record<string, { displayName: string; type: string }> = {
@@ -370,57 +377,73 @@ const Rippling = () => {
         <div>
           <h1 className="font-display text-3xl font-bold text-foreground">Rippling Expenses</h1>
           <p className="text-muted-foreground mt-1">
-            Upload Rippling expense report and generate summary by employee
+            Upload expense reports and manage employee mappings
           </p>
         </div>
-        {expenses.length > 0 && (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={handleClear}>
-              <X className="w-4 h-4 mr-2" />
-              Clear
-            </Button>
-            <Button onClick={handleExportSummary} className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600">
-              <Download className="w-4 h-4 mr-2" />
-              Export Summary
-            </Button>
-          </div>
-        )}
       </div>
 
-      {/* Upload Zone */}
-      {expenses.length === 0 && (
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          className={`
-            relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-300
-            ${isDragging 
-              ? 'border-primary bg-primary/5 scale-[1.02]' 
-              : 'border-border hover:border-primary/50 hover:bg-muted/30'
-            }
-          `}
-        >
-          <input
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            onChange={handleFileSelect}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          />
-          <div className="flex flex-col items-center gap-4">
-            <div className={`
-              w-16 h-16 rounded-2xl flex items-center justify-center transition-colors
-              ${isDragging ? 'bg-primary/20' : 'bg-muted'}
-            `}>
-              {isProcessing ? (
-                <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <Upload className={`w-8 h-8 ${isDragging ? 'text-primary' : 'text-muted-foreground'}`} />
-              )}
+      {/* Tabs */}
+      <Tabs defaultValue="expenses" className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="expenses" className="gap-2">
+            <Receipt className="w-4 h-4" />
+            Expense Reports
+          </TabsTrigger>
+          <TabsTrigger value="employees" className="gap-2">
+            <Settings className="w-4 h-4" />
+            Employee Mappings
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="expenses" className="space-y-6">
+          {/* Action buttons for expenses */}
+          {expenses.length > 0 && (
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="outline" onClick={handleClear}>
+                <X className="w-4 h-4 mr-2" />
+                Clear
+              </Button>
+              <Button onClick={handleExportSummary} className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600">
+                <Download className="w-4 h-4 mr-2" />
+                Export Summary
+              </Button>
             </div>
-            <div>
-              <h3 className="font-display text-lg font-semibold text-foreground mb-1">
-                {isDragging ? 'Drop your file here' : 'Upload Rippling Export'}
+          )}
+
+          {/* Upload Zone */}
+          {expenses.length === 0 && (
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`
+                relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-300
+                ${isDragging 
+                  ? 'border-primary bg-primary/5 scale-[1.02]' 
+                  : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                }
+              `}
+            >
+              <input
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleFileSelect}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <div className="flex flex-col items-center gap-4">
+                <div className={`
+                  w-16 h-16 rounded-2xl flex items-center justify-center transition-colors
+                  ${isDragging ? 'bg-primary/20' : 'bg-muted'}
+                `}>
+                  {isProcessing ? (
+                    <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Upload className={`w-8 h-8 ${isDragging ? 'text-primary' : 'text-muted-foreground'}`} />
+                  )}
+                </div>
+                <div>
+                  <h3 className="font-display text-lg font-semibold text-foreground mb-1">
+                    {isDragging ? 'Drop your file here' : 'Upload Rippling Export'}
               </h3>
               <p className="text-sm text-muted-foreground">
                 Drag and drop your Rippling expense export file
@@ -614,6 +637,12 @@ const Rippling = () => {
           </div>
         </div>
       )}
+        </TabsContent>
+
+        <TabsContent value="employees">
+          <RipplingEmployees />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

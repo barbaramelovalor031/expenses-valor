@@ -18,7 +18,8 @@ def clean_amount(token: str):
         return None
 
 # === padrões ===
-DATE_RE = re.compile(r"^(\d{2}/\d{2}/\d{2})\s+(.*)$")
+# Date pattern now accepts optional asterisk (*) after date (indicates posting date)
+DATE_RE = re.compile(r"^(\d{2}/\d{2}/\d{2})\*?\s+(.*)$")
 AMOUNT_TOKEN_RE = re.compile(
     r"(?:-?\$\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?)|(?:\(\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?\s*\))"
 )
@@ -26,14 +27,50 @@ PAGE_FOOTER_RE = re.compile(r"\bp\.\s*\d+/\d+\s*$", re.IGNORECASE)
 
 FEES_START = ("FEES",)
 INTEREST_START = ("INTEREST CHARGED",)
+# Sections to skip entirely (Payments and Credits summary at the beginning)
+SKIP_SECTIONS = (
+    "PAYMENTS",
+    "CREDITS", 
+)
 SECTION_END = (
     "TOTAL FEES FOR THIS PERIOD",
     "TOTAL INTEREST CHARGED FOR THIS PERIOD",
     "ABOUT TRAILING INTEREST",
     "IMPORTANT NOTICES",
+    "NEW CHARGES",  # End of Payments/Credits section
 )
 SKIP_PREFIXES = (
     "FOREIGN", "SPEND", "AMOUNT", "DETAIL", "CONTINUED ON NEXT PAGE",
+)
+
+# Words that look like cardholder names but aren't
+NOT_CARDHOLDER_WORDS = (
+    "SUBSCRIPTIONS",
+    "SUBSCRIPTION",
+    "PAYMENTS",
+    "PAYMENT",
+    "CREDITS",
+    "CREDIT",
+    "FEES",
+    "FEE",
+    "REWARDS",
+    "REWARD",
+    "TRANSACTIONS",
+    "TRANSACTION",
+    "PURCHASES",
+    "PURCHASE",
+    "ADJUSTMENTS",
+    "ADJUSTMENT",
+    "BALANCE",
+    "BALANCES",
+    "TOTAL",
+    "TOTALS",
+    "SUMMARY",
+    "DETAIL",
+    "DETAILS",
+    "CONTINUED",
+    "PAGE",
+    "ACCOUNT",
 )
 
 def is_page_footer(line: str) -> bool:
@@ -46,9 +83,20 @@ def is_cardholder_header(lines, i):
         return None
     if not re.fullmatch(r"[A-Z .'\-]+", line):
         return None
+    
+    # Skip known non-cardholder words
+    if line.upper() in NOT_CARDHOLDER_WORDS:
+        return None
+    
+    # Must have at least 2 words (first name + last name)
+    words = line.split()
+    if len(words) < 2:
+        return None
 
+    # Only accept as cardholder if followed by "Card Ending" (the actual transaction detail section)
+    # This avoids matching names in the Payments/Credits summary section
     lookahead = " ".join(normalize(lines[i+k]) for k in range(1, 4) if i+k < len(lines))
-    if ("CARD ENDING" in lookahead.upper()) or ("ACCOUNT ENDING" in lookahead.upper()) or ("CLOSING DATE" in lookahead.upper()):
+    if "CARD ENDING" in lookahead.upper():
         return line
     return None
 
@@ -100,6 +148,11 @@ def extract_amex(pdf_file) -> dict:
             skip_mode = 'interest'
             i += 1
             continue
+        # Skip "Payments" and "Credits" sections at the beginning of the statement
+        if skip_mode is None and any(upper == section for section in SKIP_SECTIONS):
+            skip_mode = 'payments_credits'
+            i += 1
+            continue
 
         if skip_mode is not None:
             if is_cardholder_header(lines, i) or is_page_footer(line) or any(upper.startswith(x) for x in SECTION_END):
@@ -112,8 +165,13 @@ def extract_amex(pdf_file) -> dict:
             i += 1
             continue
 
+        # Only try to match dates if we're inside a cardholder section
+        if current_holder is None:
+            i += 1
+            continue
+
         m = DATE_RE.match(line)
-        if m and current_holder:
+        if m:
             date_s, first_desc = m.group(1), m.group(2).strip()
             try:
                 date_fmt = datetime.strptime(date_s, "%m/%d/%y").strftime("%Y-%m-%d")

@@ -1,4 +1,4 @@
-import { CreditCard, Users, Wallet, Car } from 'lucide-react';
+import { CreditCard, Users, Wallet, Car, BarChart3, History, FileSpreadsheet, Plane } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
@@ -9,9 +9,9 @@ const menuItems = [
     icon: CreditCard,
   },
   {
-    name: 'Rippling',
-    path: '/rippling',
-    icon: Users,
+    name: 'Rippling Expenses',
+    path: '/rippling-expenses',
+    icon: FileSpreadsheet,
   },
   {
     name: 'Michael Card',
@@ -22,6 +22,16 @@ const menuItems = [
     name: 'Uber',
     path: '/uber',
     icon: Car,
+  },
+  {
+    name: 'Consolidated Expenses',
+    path: '/expenses-ytd',
+    icon: BarChart3,
+  },
+  {
+    name: 'Travel Dashboard',
+    path: '/travel',
+    icon: Plane,
   },
 ];
 

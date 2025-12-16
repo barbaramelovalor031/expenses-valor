@@ -1,5 +1,6 @@
 """
 Uber expenses service - Upload incremental para BigQuery com conversão BRL→USD
+Sincroniza com valor_expenses (tabela principal)
 """
 import pandas as pd
 from io import BytesIO, StringIO
@@ -7,6 +8,9 @@ from typing import Dict, List, Any, Optional
 import requests
 from datetime import datetime, timedelta
 import re
+import uuid
+import json
+import io
 
 from google.cloud import bigquery
 from google.oauth2 import service_account
@@ -17,7 +21,9 @@ SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "..", "credential
 PROJECT_ID = "automatic-bond-462415-h6"
 DATASET_ID = "finance"
 TABLE_ID = "uber_expenses"
+VALOR_TABLE_ID = "valor_expenses"
 FULL_TABLE_ID = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
+FULL_VALOR_TABLE_ID = f"{PROJECT_ID}.{DATASET_ID}.{VALOR_TABLE_ID}"
 
 # Cache de cotações PTAX
 PTAX_CACHE = {}
@@ -87,6 +93,47 @@ def clean_column_name(col: str) -> str:
     new_name = re.sub(r'_+', '_', new_name)
     new_name = new_name.strip('_')
     return new_name[:300]
+
+
+# Mapeamento de nomes para normalizar (remove acentos e corrige sobrenomes)
+# Format: first_name: {old_last_name: new_last_name}
+UBER_NAME_NORMALIZATIONS = {
+    "Antoine": {"Colaço": "Colaco"},
+    "Lana": {"Brandão": "Brandao"},
+    "Kelli": {"Spangler": "SpanglerBallard"},
+}
+
+# Mapeamento para normalizar first_name (remove acentos)
+# Format: old_first_name: new_first_name
+UBER_FIRST_NAME_NORMALIZATIONS = {
+    "José": "Jose",
+}
+
+
+def normalize_uber_name(first_name: str, last_name: str) -> tuple:
+    """
+    Normaliza nomes do Uber para manter consistência.
+    Retorna (first_name, last_name) normalizados.
+    """
+    if not first_name:
+        first_name = ""
+    if not last_name:
+        last_name = ""
+    
+    first_name = first_name.strip()
+    last_name = last_name.strip()
+    
+    # Normaliza first_name (ex: José -> Jose)
+    if first_name in UBER_FIRST_NAME_NORMALIZATIONS:
+        first_name = UBER_FIRST_NAME_NORMALIZATIONS[first_name]
+    
+    # Verifica se há normalização para este nome (last_name)
+    if first_name in UBER_NAME_NORMALIZATIONS:
+        name_map = UBER_NAME_NORMALIZATIONS[first_name]
+        if last_name in name_map:
+            last_name = name_map[last_name]
+    
+    return first_name, last_name
 
 
 def parse_uber_csv(file_content: bytes) -> pd.DataFrame:
@@ -232,7 +279,8 @@ def process_uber_csv(file_content: bytes, filename: str) -> Dict[str, Any]:
     
     # 6. Preparar preview (primeiras 50 linhas)
     preview_cols = ['trip_eats_id', 'transaction_timestamp_utc', 'first_name', 'last_name', 
-                    'service', 'city', 'transaction_amount_brl', 'transaction_amount_usd', 'ptax_rate']
+                    'service', 'city', 'program', 'pickup_address', 'dropoff_address',
+                    'transaction_amount_brl', 'transaction_amount_usd', 'ptax_rate']
     preview_cols = [c for c in preview_cols if c in df_new.columns]
     
     preview = df_new[preview_cols].head(50).to_dict('records') if new_rows > 0 else []
@@ -248,11 +296,18 @@ def process_uber_csv(file_content: bytes, filename: str) -> Dict[str, Any]:
     }
 
 
-def upload_new_rows_to_bigquery(file_content: bytes) -> Dict[str, Any]:
+def upload_new_rows_to_bigquery(file_content: bytes, projects_map: Dict[str, str] = None) -> Dict[str, Any]:
     """
     Faz upload das novas linhas para o BigQuery usando MERGE para evitar duplicados.
-    Mesmo se o mesmo CSV for enviado múltiplas vezes, não haverá duplicados.
+    Também sincroniza com valor_expenses (tabela principal).
+    
+    Args:
+        file_content: bytes do arquivo CSV
+        projects_map: dict mapeando trip_eats_id para o valor do project (preenchido pelo usuário)
     """
+    if projects_map is None:
+        projects_map = {}
+    
     # 1. Parsear e processar
     df = parse_uber_csv(file_content)
     
@@ -260,19 +315,39 @@ def upload_new_rows_to_bigquery(file_content: bytes) -> Dict[str, Any]:
         return {
             "success": True,
             "message": "CSV vazio",
-            "rows_inserted": 0
+            "rows_inserted": 0,
+            "synced_to_valor": 0
         }
     
-    # 2. Converter BRL para USD
+    # 2. Buscar IDs existentes para saber quais são novos
+    existing_ids = get_existing_trip_ids()
+    
+    # 3. Converter BRL para USD
     df = convert_brl_to_usd(df)
     
-    # 3. Converter todas as colunas para string (para evitar problemas de tipo)
+    # 3.5 Aplicar valores de project do usuário
+    if 'project' not in df.columns:
+        df['project'] = ''
+    
+    # Aplicar projects do mapa fornecido pelo usuário
+    for trip_id, project_value in projects_map.items():
+        if trip_id and project_value:
+            df.loc[df['trip_eats_id'] == trip_id, 'project'] = project_value
+    
+    # Identificar novas linhas antes de converter para string
+    if 'trip_eats_id' in df.columns:
+        new_mask = ~df['trip_eats_id'].isin(existing_ids)
+        df_new_for_valor = df[new_mask].copy()
+    else:
+        df_new_for_valor = df.copy()
+    
+    # 4. Converter todas as colunas para string (para evitar problemas de tipo)
     for col in df.columns:
         df[col] = df[col].apply(lambda x: str(x) if pd.notna(x) and x != '' else None)
     
     client = get_bigquery_client()
     
-    # 4. Criar tabela temporária com os dados do CSV
+    # 5. Criar tabela temporária com os dados do CSV
     temp_table_id = f"{PROJECT_ID}.{DATASET_ID}.uber_expenses_temp_{int(pd.Timestamp.now().timestamp())}"
     
     try:
@@ -287,7 +362,7 @@ def upload_new_rows_to_bigquery(file_content: bytes) -> Dict[str, Any]:
         
         print(f"[INFO] {len(df)} linhas carregadas na tabela temporária")
         
-        # 5. MERGE: inserir apenas registros que não existem (baseado em trip_eats_id)
+        # 6. MERGE: inserir apenas registros que não existem (baseado em trip_eats_id)
         merge_query = f"""
             MERGE `{FULL_TABLE_ID}` AS target
             USING `{temp_table_id}` AS source
@@ -304,13 +379,19 @@ def upload_new_rows_to_bigquery(file_content: bytes) -> Dict[str, Any]:
         
         print(f"[INFO] MERGE concluído: {rows_inserted} novas linhas inseridas")
         
-        # 6. Deletar tabela temporária
+        # 7. Deletar tabela temporária
         client.delete_table(temp_table_id, not_found_ok=True)
+        
+        # 8. Sincronizar novas linhas com valor_expenses
+        synced_count = 0
+        if rows_inserted > 0 and len(df_new_for_valor) > 0:
+            synced_count = sync_uber_to_valor(df_new_for_valor, client)
         
         return {
             "success": True,
             "message": f"{rows_inserted} linhas inseridas com sucesso (duplicados ignorados)",
-            "rows_inserted": rows_inserted
+            "rows_inserted": rows_inserted,
+            "synced_to_valor": synced_count
         }
         
     except Exception as e:
@@ -323,8 +404,148 @@ def upload_new_rows_to_bigquery(file_content: bytes) -> Dict[str, Any]:
         return {
             "success": False,
             "message": str(e),
-            "rows_inserted": 0
+            "rows_inserted": 0,
+            "synced_to_valor": 0
         }
+
+
+def sync_uber_to_valor(df_new: pd.DataFrame, client=None) -> int:
+    """
+    Sincroniza dados do Uber com a tabela valor_expenses usando MERGE (upsert).
+    - Se uber_<trip_id> existe -> UPDATE
+    - Se não existe -> INSERT
+    Todas as viagens Uber vão para categoria 'Ground Transportation - Travel'.
+    """
+    if client is None:
+        client = get_bigquery_client()
+    
+    if len(df_new) == 0:
+        return 0
+    
+    valor_rows = []
+    
+    for _, row in df_new.iterrows():
+        # Extrair dados relevantes
+        trip_id = row.get('trip_eats_id', '')
+        first_name = row.get('first_name', '') or ''
+        last_name = row.get('last_name', '') or ''
+        # Normalizar nomes (remover acentos, etc.)
+        first_name, last_name = normalize_uber_name(first_name, last_name)
+        full_name = f"{first_name} {last_name}".strip()
+        
+        # Usar USD se disponível, senão BRL
+        amount_usd = row.get('transaction_amount_usd')
+        amount_brl = row.get('transaction_amount_brl')
+        
+        try:
+            amount = float(amount_usd) if pd.notna(amount_usd) else (float(amount_brl) if pd.notna(amount_brl) else 0)
+        except:
+            amount = 0
+        
+        # Extrair data
+        timestamp = row.get('transaction_timestamp_utc', '')
+        try:
+            if timestamp and pd.notna(timestamp):
+                dt = pd.to_datetime(timestamp)
+                date_str = dt.strftime('%Y-%m-%d')
+                year = dt.year
+                month = dt.month
+            else:
+                date_str = None
+                year = None
+                month = None
+        except:
+            date_str = None
+            year = None
+            month = None
+        
+        # Determinar vendor (cidade + serviço)
+        service = row.get('service', '') or ''
+        city = row.get('city', '') or ''
+        vendor = f"Uber {service}".strip() if service else "Uber"
+        
+        # Project field
+        project = row.get('project', '') or ''
+        
+        # Usar trip_eats_id como ID para manter link entre tabelas
+        valor_id = f"uber_{trip_id}" if trip_id else str(uuid.uuid4())
+        
+        valor_rows.append({
+            "id": valor_id,
+            "name": full_name,
+            "amount": amount,
+            "category": "Ground Transportation - Travel",  # SEMPRE essa categoria para Uber
+            "date": date_str,
+            "vendor": vendor,
+            "year": year,
+            "month": month,
+            "source": "Uber",
+            "project": project,
+        })
+    
+    if not valor_rows:
+        return 0
+    
+    try:
+        # Use MERGE to upsert - prevents duplicates!
+        batch_size = 100
+        total_synced = 0
+        
+        for i in range(0, len(valor_rows), batch_size):
+            batch = valor_rows[i:i+batch_size]
+            
+            values_parts = []
+            for row in batch:
+                # Escape single quotes
+                name = (row["name"] or "").replace("'", "\\'")
+                vendor = (row["vendor"] or "").replace("'", "\\'")
+                category = (row["category"] or "").replace("'", "\\'")
+                project = (row["project"] or "").replace("'", "\\'")
+                date_str = row["date"] or "1900-01-01"
+                year = row["year"] or 2024
+                month = row["month"] or 1
+                
+                values_parts.append(f"""
+                    ('{row["id"]}', '{name}', {row["amount"]}, '{category}', '{date_str}', '{vendor}', {year}, {month}, '{row["source"]}', '{project}')
+                """)
+            
+            values_sql = ",".join(values_parts)
+            
+            merge_query = f"""
+                MERGE `{FULL_VALOR_TABLE_ID}` AS target
+                USING (
+                    SELECT * FROM UNNEST([
+                        STRUCT<id STRING, name STRING, amount FLOAT64, category STRING, date STRING, vendor STRING, year INT64, month INT64, source STRING, project STRING>
+                        {values_sql}
+                    ])
+                ) AS source
+                ON target.id = source.id
+                WHEN MATCHED THEN
+                    UPDATE SET
+                        name = source.name,
+                        amount = source.amount,
+                        category = source.category,
+                        date = PARSE_DATE('%Y-%m-%d', source.date),
+                        vendor = source.vendor,
+                        year = source.year,
+                        month = source.month,
+                        source = source.source,
+                        project = source.project
+                WHEN NOT MATCHED THEN
+                    INSERT (id, created_at, name, amount, category, date, vendor, year, month, source, project)
+                    VALUES (source.id, CURRENT_TIMESTAMP(), source.name, source.amount, source.category, 
+                            PARSE_DATE('%Y-%m-%d', source.date), source.vendor, source.year, source.month, source.source, source.project)
+            """
+            
+            client.query(merge_query).result()
+            total_synced += len(batch)
+        
+        print(f"[INFO] {total_synced} linhas sincronizadas com valor_expenses (MERGE)")
+        return total_synced
+        
+    except Exception as e:
+        print(f"[ERROR] Falha ao sincronizar com valor_expenses: {e}")
+        return 0
 
 
 def get_uber_dashboard_data() -> Dict[str, Any]:
@@ -428,9 +649,12 @@ def get_uber_dashboard_data() -> Dict[str, Any]:
                 first_name,
                 last_name,
                 service,
+                program,
                 city,
                 pickup_address,
                 drop_off_address as dropoff_address,
+                request_time_local,
+                drop_off_time_local,
                 ROUND(SAFE_CAST(transaction_amount_brl AS FLOAT64), 2) as amount_brl,
                 ROUND(SAFE_CAST(transaction_amount_usd AS FLOAT64), 2) as amount_usd,
                 ROUND(SAFE_CAST(ptax_rate AS FLOAT64), 4) as ptax_rate,
@@ -479,3 +703,310 @@ def get_uber_dashboard_data() -> Dict[str, Any]:
             "all_transactions": [],
             "error": str(e)
         }
+
+
+def update_uber_expense(trip_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Atualiza uma despesa Uber por trip_eats_id.
+    Também atualiza o registro correspondente em valor_expenses.
+    """
+    client = get_bigquery_client()
+    
+    # Campos permitidos para atualização no uber_expenses
+    uber_allowed_fields = ["user_name", "first_name", "last_name", "service", "city", "project"]
+    uber_set_parts = []
+    
+    for field in uber_allowed_fields:
+        if field in updates:
+            value = updates[field]
+            if value is None:
+                uber_set_parts.append(f"{field} = NULL")
+            else:
+                escaped_value = str(value).replace("'", "\\'")
+                uber_set_parts.append(f"{field} = '{escaped_value}'")
+    
+    errors = []
+    
+    # 1. Atualizar uber_expenses se houver campos relevantes
+    if uber_set_parts:
+        uber_query = f"""
+            UPDATE `{FULL_TABLE_ID}`
+            SET {', '.join(uber_set_parts)}
+            WHERE trip_eats_id = '{trip_id}'
+        """
+        try:
+            client.query(uber_query).result()
+        except Exception as e:
+            errors.append(f"Erro ao atualizar uber_expenses: {str(e)}")
+    
+    # 2. Atualizar valor_expenses
+    valor_id = f"uber_{trip_id}"
+    valor_allowed_fields = ["name", "amount", "category", "vendor", "project"]
+    valor_set_parts = []
+    
+    # Mapear campos do uber para valor
+    if "first_name" in updates or "last_name" in updates:
+        # Normalizar nomes se fornecidos
+        if "first_name" in updates:
+            updates["first_name"], _ = normalize_uber_name(updates["first_name"], "")
+        if "last_name" in updates:
+            _, updates["last_name"] = normalize_uber_name("", updates["last_name"])
+        
+        # Buscar nome completo atual se não tiver ambos
+        if "first_name" in updates and "last_name" in updates:
+            full_name = f"{updates['first_name']} {updates['last_name']}".strip()
+        else:
+            # Buscar o valor atual
+            name_query = f"""
+                SELECT first_name, last_name FROM `{FULL_TABLE_ID}`
+                WHERE trip_eats_id = '{trip_id}'
+            """
+            try:
+                result = list(client.query(name_query).result())
+                if result:
+                    first = updates.get("first_name", result[0].first_name or "")
+                    last = updates.get("last_name", result[0].last_name or "")
+                    full_name = f"{first} {last}".strip()
+                else:
+                    full_name = updates.get("first_name", "") + " " + updates.get("last_name", "")
+            except:
+                full_name = updates.get("first_name", "") + " " + updates.get("last_name", "")
+        
+        escaped_name = full_name.replace("'", "\\'")
+        valor_set_parts.append(f"name = '{escaped_name}'")
+    
+    if "category" in updates:
+        escaped_cat = str(updates["category"]).replace("'", "\\'")
+        valor_set_parts.append(f"category = '{escaped_cat}'")
+    
+    if "amount" in updates:
+        valor_set_parts.append(f"amount = {float(updates['amount'])}")
+    
+    if "vendor" in updates:
+        escaped_vendor = str(updates["vendor"]).replace("'", "\\'")
+        valor_set_parts.append(f"vendor = '{escaped_vendor}'")
+    
+    if "project" in updates:
+        escaped_project = str(updates["project"]).replace("'", "\\'") if updates["project"] else ""
+        valor_set_parts.append(f"project = '{escaped_project}'")
+    
+    if valor_set_parts:
+        valor_query = f"""
+            UPDATE `{FULL_VALOR_TABLE_ID}`
+            SET {', '.join(valor_set_parts)}
+            WHERE id = '{valor_id}'
+        """
+        try:
+            client.query(valor_query).result()
+        except Exception as e:
+            errors.append(f"Erro ao atualizar valor_expenses: {str(e)}")
+    
+    if errors:
+        return {"success": False, "errors": errors}
+    
+    return {"success": True}
+
+
+def delete_uber_expense(trip_id: str) -> Dict[str, Any]:
+    """
+    Deleta uma despesa Uber por trip_eats_id.
+    Também remove o registro correspondente em valor_expenses.
+    """
+    client = get_bigquery_client()
+    errors = []
+    
+    # 1. Deletar de uber_expenses
+    uber_query = f"""
+        DELETE FROM `{FULL_TABLE_ID}`
+        WHERE trip_eats_id = '{trip_id}'
+    """
+    try:
+        client.query(uber_query).result()
+    except Exception as e:
+        errors.append(f"Erro ao deletar uber_expenses: {str(e)}")
+    
+    # 2. Deletar de valor_expenses
+    valor_id = f"uber_{trip_id}"
+    valor_query = f"""
+        DELETE FROM `{FULL_VALOR_TABLE_ID}`
+        WHERE id = '{valor_id}'
+    """
+    try:
+        client.query(valor_query).result()
+    except Exception as e:
+        errors.append(f"Erro ao deletar valor_expenses: {str(e)}")
+    
+    if errors:
+        return {"success": False, "errors": errors}
+    
+    return {"success": True}
+
+
+def resync_all_uber_to_valor() -> Dict[str, Any]:
+    """
+    Re-sincroniza TODOS os registros do uber_expenses com valor_expenses usando MERGE.
+    Isso não duplica - atualiza registros existentes ou insere novos.
+    """
+    client = get_bigquery_client()
+    
+    try:
+        # Buscar todos os registros do uber_expenses
+        query = f"""
+            SELECT trip_eats_id, first_name, last_name, transaction_amount_usd, transaction_amount_brl,
+                   transaction_timestamp_utc, service, city, project
+            FROM `{FULL_TABLE_ID}`
+        """
+        result = list(client.query(query).result())
+        
+        if not result:
+            return {"success": True, "synced_count": 0, "message": "No Uber expenses to sync"}
+        
+        # Preparar dados para MERGE
+        valor_rows = []
+        for row in result:
+            trip_id = row.trip_eats_id or ""
+            first_name = row.first_name or ""
+            last_name = row.last_name or ""
+            # Normalizar nomes (remover acentos, etc.)
+            first_name, last_name = normalize_uber_name(first_name, last_name)
+            full_name = f"{first_name} {last_name}".strip()
+            
+            # Usar USD se disponível
+            try:
+                amount = float(row.transaction_amount_usd) if row.transaction_amount_usd else (float(row.transaction_amount_brl) if row.transaction_amount_brl else 0)
+            except:
+                amount = 0
+            
+            # Extrair data
+            try:
+                if row.transaction_timestamp_utc:
+                    dt = pd.to_datetime(row.transaction_timestamp_utc)
+                    date_str = dt.strftime('%Y-%m-%d')
+                    year = dt.year
+                    month = dt.month
+                else:
+                    date_str = "1900-01-01"
+                    year = 2024
+                    month = 1
+            except:
+                date_str = "1900-01-01"
+                year = 2024
+                month = 1
+            
+            service = row.service or ""
+            vendor = f"Uber {service}".strip() if service else "Uber"
+            project = row.project or ""
+            
+            valor_id = f"uber_{trip_id}" if trip_id else str(uuid.uuid4())
+            
+            valor_rows.append({
+                "id": valor_id,
+                "name": full_name,
+                "amount": amount,
+                "category": "Ground Transportation - Travel",
+                "date": date_str,
+                "vendor": vendor,
+                "year": year,
+                "month": month,
+                "source": "Uber",
+                "project": project,
+            })
+        
+        # Use MERGE em batches
+        batch_size = 100
+        total_synced = 0
+        
+        for i in range(0, len(valor_rows), batch_size):
+            batch = valor_rows[i:i+batch_size]
+            
+            values_parts = []
+            for r in batch:
+                name = (r["name"] or "").replace("'", "\\'")
+                vendor = (r["vendor"] or "").replace("'", "\\'")
+                category = (r["category"] or "").replace("'", "\\'")
+                project = (r["project"] or "").replace("'", "\\'")
+                
+                values_parts.append(f"""
+                    ('{r["id"]}', '{name}', {r["amount"]}, '{category}', '{r["date"]}', '{vendor}', {r["year"]}, {r["month"]}, '{r["source"]}', '{project}')
+                """)
+            
+            values_sql = ",".join(values_parts)
+            
+            merge_query = f"""
+                MERGE `{FULL_VALOR_TABLE_ID}` AS target
+                USING (
+                    SELECT * FROM UNNEST([
+                        STRUCT<id STRING, name STRING, amount FLOAT64, category STRING, date STRING, vendor STRING, year INT64, month INT64, source STRING, project STRING>
+                        {values_sql}
+                    ])
+                ) AS source
+                ON target.id = source.id
+                WHEN MATCHED THEN
+                    UPDATE SET
+                        name = source.name,
+                        amount = source.amount,
+                        category = source.category,
+                        date = PARSE_DATE('%Y-%m-%d', source.date),
+                        vendor = source.vendor,
+                        year = source.year,
+                        month = source.month,
+                        source = source.source,
+                        project = source.project
+                WHEN NOT MATCHED THEN
+                    INSERT (id, created_at, name, amount, category, date, vendor, year, month, source, project)
+                    VALUES (source.id, CURRENT_TIMESTAMP(), source.name, source.amount, source.category, 
+                            PARSE_DATE('%Y-%m-%d', source.date), source.vendor, source.year, source.month, source.source, source.project)
+            """
+            
+            client.query(merge_query).result()
+            total_synced += len(batch)
+        
+        return {
+            "success": True,
+            "synced_count": total_synced,
+            "message": f"Synced {total_synced} Uber expenses to valor_expenses (using MERGE - no duplicates)"
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def delete_uber_expenses_batch(trip_ids: List[str]) -> Dict[str, Any]:
+    """
+    Deleta múltiplas despesas Uber por trip_eats_id.
+    Também remove os registros correspondentes em valor_expenses.
+    """
+    if not trip_ids:
+        return {"success": False, "error": "Nenhum ID fornecido"}
+    
+    client = get_bigquery_client()
+    errors = []
+    
+    # Build IN clauses
+    uber_ids_list = ", ".join([f"'{tid}'" for tid in trip_ids])
+    valor_ids_list = ", ".join([f"'uber_{tid}'" for tid in trip_ids])
+    
+    # 1. Deletar de uber_expenses
+    uber_query = f"""
+        DELETE FROM `{FULL_TABLE_ID}`
+        WHERE trip_eats_id IN ({uber_ids_list})
+    """
+    try:
+        client.query(uber_query).result()
+    except Exception as e:
+        errors.append(f"Erro ao deletar uber_expenses: {str(e)}")
+    
+    # 2. Deletar de valor_expenses
+    valor_query = f"""
+        DELETE FROM `{FULL_VALOR_TABLE_ID}`
+        WHERE id IN ({valor_ids_list})
+    """
+    try:
+        client.query(valor_query).result()
+    except Exception as e:
+        errors.append(f"Erro ao deletar valor_expenses: {str(e)}")
+    
+    if errors:
+        return {"success": False, "errors": errors, "deleted_count": len(trip_ids)}
+    
+    return {"success": True, "deleted_count": len(trip_ids)}

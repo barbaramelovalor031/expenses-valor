@@ -1,6 +1,7 @@
 import { ExtractedInvoice, Transaction } from '@/types/invoice';
 import { Button } from '@/components/ui/button';
-import { X, Download, Calendar, CreditCard, Receipt, Users, Sparkles, Loader2, FileSpreadsheet } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { X, Download, Calendar, CreditCard, Receipt, Users, Sparkles, Loader2, FileSpreadsheet, Send, Database } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -27,8 +28,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { useState, useMemo } from 'react';
-import { categorizeTransactions, getCategories } from '@/lib/api';
+import { Checkbox } from '@/components/ui/checkbox';
+import { useState, useMemo, useRef, useCallback } from 'react';
+import { categorizeTransactions, addCreditCardDashboardExpensesBatch, AddCreditCardDashboardExpense } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 
 // Available expense categories
@@ -66,26 +68,32 @@ const EXPENSE_CATEGORIES = [
   "Wellhub Reimbursement",
 ];
 
-// Available cardholders/users (canonical names)
+// Available cardholders/users (canonical names) - MUST MATCH CONSOLIDATED DATABASE
 const AVAILABLE_USERS = [
   "Scott Sobel",
   "Clifford Sobel",
-  "John Douglas Smith",
+  "Doug Smith",
   "Michael Nicklas",
   "Paulo Passoni",
-  "Antoine Colaço",
+  "Antoine Colaco",
   "Carlos Costa",
-  "Kelli Spangler",
+  "Kelli SpanglerBallard",
 ];
 
 // Alias mappings for user names (lowercase key -> canonical name)
 const USER_ALIASES: Record<string, string> = {
-  "j.douglas smith": "John Douglas Smith",
-  "j. douglas smith": "John Douglas Smith",
-  "j douglas smith": "John Douglas Smith",
-  "jd smith": "John Douglas Smith",
-  "j.d. smith": "John Douglas Smith",
-  "douglas smith": "John Douglas Smith",
+  // Doug Smith variations (AMEX shows as J. Douglas Smith)
+  "j.douglas smith": "Doug Smith",
+  "j. douglas smith": "Doug Smith",
+  "j douglas smith": "Doug Smith",
+  "jd smith": "Doug Smith",
+  "j.d. smith": "Doug Smith",
+  "douglas smith": "Doug Smith",
+  "john douglas smith": "Doug Smith",
+  // Antoine variations
+  "antoine colaço": "Antoine Colaco",
+  // Kelli variations
+  "kelli spangler": "Kelli SpanglerBallard",
 };
 
 // Helper to find canonical user name (case-insensitive + aliases)
@@ -113,6 +121,7 @@ interface InvoiceViewerProps {
 export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransactions }: InvoiceViewerProps) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isCategorizing, setIsCategorizing] = useState(false);
+  const [isSendingToDb, setIsSendingToDb] = useState(false);
   const [selectedUser, setSelectedUser] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [transactions, setTransactions] = useState(invoice.transactions);
@@ -121,6 +130,8 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
     invoice.transactions.some(tx => tx.ai_category)
   );
   const [selectedDescription, setSelectedDescription] = useState<string | null>(null);
+  // Selected transactions for sending to database
+  const [selectedForSend, setSelectedForSend] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
   // Groups transactions by cardholder
@@ -264,6 +275,158 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
     }
   };
 
+  // Handle comments change - debounced
+  const commentsTimeoutRef = useRef<Record<number, NodeJS.Timeout>>({});
+  const handleCommentsChange = useCallback((index: number, comments: string) => {
+    // Clear previous timeout for this index
+    if (commentsTimeoutRef.current[index]) {
+      clearTimeout(commentsTimeoutRef.current[index]);
+    }
+    // Debounce the update
+    commentsTimeoutRef.current[index] = setTimeout(() => {
+      const updatedTransactions = [...transactions];
+      const txIndex = transactions.findIndex(t => t === filteredTransactions[index]);
+      if (txIndex !== -1) {
+        updatedTransactions[txIndex] = {
+          ...updatedTransactions[txIndex],
+          comments,
+        };
+        setTransactions(updatedTransactions);
+        onUpdateTransactions?.(updatedTransactions);
+      }
+    }, 300);
+  }, [transactions, filteredTransactions, onUpdateTransactions]);
+
+  // Handle project change - debounced
+  const projectTimeoutRef = useRef<Record<number, NodeJS.Timeout>>({});
+  const handleProjectChange = useCallback((index: number, project: string) => {
+    // Clear previous timeout for this index
+    if (projectTimeoutRef.current[index]) {
+      clearTimeout(projectTimeoutRef.current[index]);
+    }
+    // Debounce the update
+    projectTimeoutRef.current[index] = setTimeout(() => {
+      const updatedTransactions = [...transactions];
+      const txIndex = transactions.findIndex(t => t === filteredTransactions[index]);
+      if (txIndex !== -1) {
+        updatedTransactions[txIndex] = {
+          ...updatedTransactions[txIndex],
+          project,
+        };
+        setTransactions(updatedTransactions);
+        onUpdateTransactions?.(updatedTransactions);
+      }
+    }, 300);
+  }, [transactions, filteredTransactions, onUpdateTransactions]);
+
+  // Handle selection toggle for individual transaction
+  const handleSelectTransaction = (transactionId: string) => {
+    const newSelected = new Set(selectedForSend);
+    if (newSelected.has(transactionId)) {
+      newSelected.delete(transactionId);
+    } else {
+      newSelected.add(transactionId);
+    }
+    setSelectedForSend(newSelected);
+  };
+
+  // Handle select all / deselect all for filtered transactions
+  const handleSelectAll = () => {
+    const filteredIds = filteredTransactions.map(tx => tx.id);
+    const allSelected = filteredIds.every(id => selectedForSend.has(id));
+    
+    const newSelected = new Set(selectedForSend);
+    if (allSelected) {
+      // Deselect all filtered
+      filteredIds.forEach(id => newSelected.delete(id));
+    } else {
+      // Select all filtered
+      filteredIds.forEach(id => newSelected.add(id));
+    }
+    setSelectedForSend(newSelected);
+  };
+
+  // Check if all filtered are selected
+  const allFilteredSelected = useMemo(() => {
+    if (filteredTransactions.length === 0) return false;
+    return filteredTransactions.every(tx => selectedForSend.has(tx.id));
+  }, [filteredTransactions, selectedForSend]);
+
+  // Get transactions ready to send (selected + categorized + has user)
+  const transactionsReadyToSend = useMemo(() => {
+    return transactions.filter(tx => 
+      selectedForSend.has(tx.id) && 
+      tx.ai_category && 
+      tx.category
+    );
+  }, [transactions, selectedForSend]);
+
+  // Count selected but not ready (missing category or user)
+  const selectedButNotReady = useMemo(() => {
+    return transactions.filter(tx => 
+      selectedForSend.has(tx.id) && 
+      (!tx.ai_category || !tx.category)
+    ).length;
+  }, [transactions, selectedForSend]);
+
+  // Handle send to consolidated database (via intermediate table)
+  const handleSendToDatabase = async () => {
+    if (transactionsReadyToSend.length === 0) {
+      const reason = selectedForSend.size === 0 
+        ? "Select transactions first using the checkboxes."
+        : `${selectedButNotReady} selected transaction(s) are missing a category or user assignment.`;
+      toast({
+        title: "Cannot send to database",
+        description: reason,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSendingToDb(true);
+    try {
+      // Map card ID to proper credit card name
+      const cardNameMap: Record<string, string> = {
+        'amex': 'Amex',
+        'svb': 'SVB',
+        'bradesco': 'Bradesco',
+      };
+      const creditCardName = cardNameMap[invoice.cardId.toLowerCase()] || 'Amex';
+
+      // Prepare transactions for the new API format
+      const expenses: AddCreditCardDashboardExpense[] = transactionsReadyToSend.map(tx => ({
+        date: tx.date || new Date().toISOString().split('T')[0],
+        credit_card: creditCardName,
+        description: tx.description,
+        user: getCanonicalUser(tx.category),
+        category: tx.ai_category!,
+        amount: tx.amount,
+        comments: tx.comments || '',
+      }));
+
+      const result = await addCreditCardDashboardExpensesBatch(expenses);
+
+      if (result.success) {
+        toast({
+          title: "✅ Sent to database!",
+          description: `Added ${result.added_count} transactions. Switch to Database tab to view.`,
+        });
+        
+        // Clear selection after successful send
+        setSelectedForSend(new Set());
+      }
+    } catch (error) {
+      console.error('Error sending to database:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to send to database. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingToDb(false);
+    }
+  };
+
   const handleDownloadExcel = async () => {
     if (!originalFile) {
       // Fallback to CSV if no original file
@@ -374,7 +537,7 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/20 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-4xl max-h-[90vh] bg-card rounded-2xl shadow-elevated overflow-hidden animate-scale-in">
+      <div className="w-full max-w-7xl max-h-[90vh] bg-card rounded-2xl shadow-elevated overflow-hidden animate-scale-in">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border gradient-primary">
           <div className="flex items-center gap-4">
@@ -517,6 +680,32 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
                   {isDownloading ? 'Generating...' : 'Export with Categories'}
                 </Button>
               )}
+              {showCategories && (
+                <div className="flex items-center gap-2 pl-2 border-l border-border">
+                  <Button 
+                    variant="default" 
+                    size="sm" 
+                    onClick={handleSendToDatabase}
+                    disabled={isSendingToDb || transactionsReadyToSend.length === 0}
+                    className={`${transactionsReadyToSend.length > 0 
+                      ? 'bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600' 
+                      : 'bg-gray-400'}`}
+                    title={selectedButNotReady > 0 ? `${selectedButNotReady} selected are missing category/user` : ''}
+                  >
+                    {isSendingToDb ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Database className="w-4 h-4" />
+                    )}
+                    {isSendingToDb ? 'Sending...' : `Send to DB (${transactionsReadyToSend.length})`}
+                  </Button>
+                  {selectedButNotReady > 0 && (
+                    <span className="text-xs text-amber-600">
+                      ⚠️ {selectedButNotReady} missing category
+                    </span>
+                  )}
+                </div>
+              )}
               <Button 
                 variant="outline" 
                 size="sm" 
@@ -569,6 +758,15 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
+                  {showCategories && (
+                    <TableHead className="w-[40px]">
+                      <Checkbox 
+                        checked={allFilteredSelected}
+                        onCheckedChange={handleSelectAll}
+                        aria-label="Select all"
+                      />
+                    </TableHead>
+                  )}
                   <TableHead className="font-semibold">Date</TableHead>
                   <TableHead className="font-semibold">Description</TableHead>
                   {selectedUser === 'all' && (
@@ -577,12 +775,30 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
                   {showCategories && (
                     <TableHead className="font-semibold">AI Category</TableHead>
                   )}
+                  {showCategories && (
+                    <TableHead className="font-semibold">Comments</TableHead>
+                  )}
+                  {showCategories && (
+                    <TableHead className="font-semibold">Project</TableHead>
+                  )}
                   <TableHead className="font-semibold text-right">Amount</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredTransactions.map((transaction, index) => (
-                  <TableRow key={transaction.id} className="hover:bg-muted/30">
+                  <TableRow 
+                    key={transaction.id} 
+                    className={`hover:bg-muted/30 ${selectedForSend.has(transaction.id) ? 'bg-blue-50' : ''}`}
+                  >
+                    {showCategories && (
+                      <TableCell>
+                        <Checkbox 
+                          checked={selectedForSend.has(transaction.id)}
+                          onCheckedChange={() => handleSelectTransaction(transaction.id)}
+                          aria-label={`Select transaction ${transaction.description}`}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell className="text-muted-foreground">
                       {transaction.date}
                     </TableCell>
@@ -653,6 +869,28 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
                             ))}
                           </SelectContent>
                         </Select>
+                      </TableCell>
+                    )}
+                    {showCategories && (
+                      <TableCell>
+                        <Input
+                          type="text"
+                          placeholder="Add comments..."
+                          defaultValue={transaction.comments || ''}
+                          onChange={(e) => handleCommentsChange(index, e.target.value)}
+                          className="w-[150px] h-8 text-xs"
+                        />
+                      </TableCell>
+                    )}
+                    {showCategories && (
+                      <TableCell>
+                        <Input
+                          type="text"
+                          placeholder="Add project..."
+                          defaultValue={transaction.project || ''}
+                          onChange={(e) => handleProjectChange(index, e.target.value)}
+                          className="w-[120px] h-8 text-xs"
+                        />
                       </TableCell>
                     )}
                     <TableCell className="text-right font-medium text-foreground">

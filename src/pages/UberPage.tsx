@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { Car, Upload, FileSpreadsheet, X, Check, AlertCircle, TrendingUp, Users, MapPin, DollarSign, Clock, Navigation, Filter, RefreshCw, Download } from 'lucide-react';
+import { Car, Upload, FileSpreadsheet, X, Check, AlertCircle, TrendingUp, Users, MapPin, DollarSign, Clock, Navigation, Filter, RefreshCw, Download, Trash2, Edit2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -31,8 +31,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
-import { API_BASE_URL } from '@/lib/api';
+import { API_BASE_URL, updateUberExpense, deleteUberExpensesBatch } from '@/lib/api';
 
 interface PreviewData {
   total_rows_in_csv: number;
@@ -51,14 +52,18 @@ interface Transaction {
   first_name: string;
   last_name: string;
   service: string;
+  program?: string;
   city: string;
   pickup_address: string;
   dropoff_address: string;
+  request_time_local: string;
+  drop_off_time_local: string;
   amount_brl: number;
   amount_usd: number;
   ptax_rate: number;
   distance_mi: number;
   duration_min: number;
+  project?: string;
 }
 
 interface DashboardData {
@@ -98,6 +103,15 @@ const UberPage = () => {
     title: '',
     address: ''
   });
+  
+  // Multi-select and editing states
+  const [selectedTrips, setSelectedTrips] = useState<Set<string>>(new Set());
+  const [isDeletingBatch, setIsDeletingBatch] = useState(false);
+  const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null);
+  const [editingValue, setEditingValue] = useState<string>('');
+  
+  // Preview project values (editable per row)
+  const [previewProjects, setPreviewProjects] = useState<Record<string, string>>({});
   
   const { toast } = useToast();
 
@@ -165,10 +179,102 @@ const UberPage = () => {
     };
   }, [filteredTransactions]);
 
+  // Multi-select functions
+  const toggleSelectTrip = (tripId: string) => {
+    setSelectedTrips(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(tripId)) {
+        newSet.delete(tripId);
+      } else {
+        newSet.add(tripId);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedTrips.size === filteredTransactions.length) {
+      setSelectedTrips(new Set());
+    } else {
+      setSelectedTrips(new Set(filteredTransactions.map(tx => tx.trip_eats_id)));
+    }
+  };
+
+  const deleteSelectedTrips = async () => {
+    if (selectedTrips.size === 0) return;
+
+    setIsDeletingBatch(true);
+    try {
+      const idsToDelete = Array.from(selectedTrips);
+      await deleteUberExpensesBatch(idsToDelete);
+      
+      toast({
+        title: "Deleted",
+        description: `${idsToDelete.length} trip(s) deleted successfully (also removed from consolidated)`,
+      });
+      
+      setSelectedTrips(new Set());
+      loadDashboard();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete trips",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeletingBatch(false);
+    }
+  };
+
+  // Inline editing functions
+  const startEditing = (tripId: string, field: string, currentValue: string) => {
+    setEditingCell({ id: tripId, field });
+    setEditingValue(currentValue || '');
+  };
+
+  const cancelEditing = () => {
+    setEditingCell(null);
+    setEditingValue('');
+  };
+
+  const saveEditing = async () => {
+    if (!editingCell) return;
+
+    try {
+      const updates: Record<string, string | number> = {};
+      updates[editingCell.field] = editingValue;
+
+      await updateUberExpense(editingCell.id, updates);
+      
+      toast({
+        title: "Updated",
+        description: `${editingCell.field} updated (also synced to consolidated)`,
+      });
+      
+      cancelEditing();
+      loadDashboard();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      saveEditing();
+    } else if (e.key === 'Escape') {
+      cancelEditing();
+    }
+  };
+
   const processFile = async (uploadedFile: File) => {
     setIsProcessing(true);
     setFile(uploadedFile);
     setPreviewData(null);
+    setPreviewProjects({}); // Clear previous project values
     
     try {
       const formData = new FormData();
@@ -212,6 +318,8 @@ const UberPage = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      // Send project values as JSON - maps trip_eats_id to project value
+      formData.append('projects', JSON.stringify(previewProjects));
       
       const response = await fetch(`${API_BASE_URL}/uber/upload`, {
         method: 'POST',
@@ -233,6 +341,7 @@ const UberPage = () => {
         
         setFile(null);
         setPreviewData(null);
+        setPreviewProjects({}); // Clear project values
         loadDashboard();
       } else {
         throw new Error(data.message);
@@ -295,6 +404,32 @@ const UberPage = () => {
     return `${symbol} ${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
+  // Convert time to 12h AM/PM format
+  const formatTime = (time: string | null | undefined): string => {
+    if (!time) return '-';
+    
+    // If already in AM/PM format, return as-is
+    if (time.includes('AM') || time.includes('PM')) {
+      return time;
+    }
+    
+    // Parse HH:MM:SS or HH:MM format
+    const match = time.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+    if (!match) return time;
+    
+    let hours = parseInt(match[1], 10);
+    const minutes = match[2];
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    
+    if (hours === 0) {
+      hours = 12;
+    } else if (hours > 12) {
+      hours = hours - 12;
+    }
+    
+    return `${hours}:${minutes}${ampm}`;
+  };
+
   const hasActiveFilters = selectedUser !== 'all' || startDate || endDate;
 
   // Export to XLSX
@@ -334,6 +469,7 @@ const UberPage = () => {
             'Date': tx.transaction_timestamp_utc?.split(' ')[0] || '',
             'User': tx.user_name,
             'Service': tx.service,
+            'Program': tx.program || '',
             'City': tx.city,
             'Pickup Address': tx.pickup_address || '',
             'Drop-off Address': tx.dropoff_address || '',
@@ -361,6 +497,7 @@ const UberPage = () => {
         'Date': tx.transaction_timestamp_utc?.split(' ')[0] || '',
         'User': tx.user_name,
         'Service': tx.service,
+        'Program': tx.program || '',
         'City': tx.city,
         'Pickup Address': tx.pickup_address || '',
         'Drop-off Address': tx.dropoff_address || '',
@@ -532,6 +669,8 @@ const UberPage = () => {
                                 <TableHead>Date</TableHead>
                                 <TableHead>User</TableHead>
                                 <TableHead>Service</TableHead>
+                                <TableHead>Program</TableHead>
+                                <TableHead className="min-w-[150px]">Project</TableHead>
                                 <TableHead>Pickup</TableHead>
                                 <TableHead>Drop-off</TableHead>
                                 <TableHead className="text-right">BRL</TableHead>
@@ -548,6 +687,18 @@ const UberPage = () => {
                                     {row.first_name} {row.last_name}
                                   </TableCell>
                                   <TableCell>{row.service}</TableCell>
+                                  <TableCell className="text-muted-foreground">{row.program || '-'}</TableCell>
+                                  <TableCell>
+                                    <Input
+                                      value={previewProjects[row.trip_eats_id] || ''}
+                                      onChange={(e) => setPreviewProjects(prev => ({
+                                        ...prev,
+                                        [row.trip_eats_id]: e.target.value
+                                      }))}
+                                      placeholder="Enter project..."
+                                      className="h-8 text-sm min-w-[120px]"
+                                    />
+                                  </TableCell>
                                   <TableCell className="max-w-[150px] truncate" title={row.pickup_address}>
                                     {row.pickup_address || '-'}
                                   </TableCell>
@@ -849,32 +1000,194 @@ const UberPage = () => {
                     Export
                   </Button>
                 </div>
+
+                {/* Multi-select actions */}
+                {selectedTrips.size > 0 && (
+                  <div className="mt-3 p-3 bg-red-50 dark:bg-red-950 rounded-lg flex items-center justify-between">
+                    <span className="text-sm text-red-700 dark:text-red-300">
+                      {selectedTrips.size} trip(s) selected
+                    </span>
+                    <Button 
+                      variant="destructive" 
+                      size="sm"
+                      onClick={deleteSelectedTrips}
+                      disabled={isDeletingBatch}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      {isDeletingBatch ? 'Deleting...' : 'Delete Selected'}
+                    </Button>
+                  </div>
+                )}
               </CardHeader>
               <CardContent>
                 <div className="max-h-[600px] overflow-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="w-[40px]">
+                          <Checkbox
+                            checked={filteredTransactions.length > 0 && selectedTrips.size === filteredTransactions.length}
+                            onCheckedChange={toggleSelectAll}
+                          />
+                        </TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>User</TableHead>
                         <TableHead>Service</TableHead>
+                        <TableHead>Program</TableHead>
                         <TableHead>City</TableHead>
-                        <TableHead>Pickup Address</TableHead>
-                        <TableHead>Drop-off Address</TableHead>
+                        <TableHead>Project</TableHead>
                         <TableHead className="text-right">USD</TableHead>
                         <TableHead className="text-right">BRL</TableHead>
                         <TableHead className="text-right">PTAX</TableHead>
+                        <TableHead>Start</TableHead>
+                        <TableHead>End</TableHead>
+                        <TableHead>Pickup Address</TableHead>
+                        <TableHead>Drop-off Address</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredTransactions.map((tx, idx) => (
-                        <TableRow key={tx.trip_eats_id || idx}>
+                        <TableRow key={tx.trip_eats_id || idx} className={selectedTrips.has(tx.trip_eats_id) ? 'bg-blue-50 dark:bg-blue-950' : ''}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedTrips.has(tx.trip_eats_id)}
+                              onCheckedChange={() => toggleSelectTrip(tx.trip_eats_id)}
+                            />
+                          </TableCell>
                           <TableCell className="text-sm whitespace-nowrap">
                             {tx.transaction_timestamp_utc?.split(' ')[0] || '-'}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap">{tx.user_name}</TableCell>
-                          <TableCell>{tx.service}</TableCell>
-                          <TableCell>{tx.city}</TableCell>
+                          {/* User - Editable */}
+                          <TableCell className="whitespace-nowrap">
+                            {editingCell?.id === tx.trip_eats_id && editingCell?.field === 'user_name' ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  value={editingValue}
+                                  onChange={(e) => setEditingValue(e.target.value)}
+                                  onKeyDown={handleEditKeyDown}
+                                  className="h-7 w-32"
+                                  autoFocus
+                                />
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={saveEditing}>
+                                  <Check className="h-3 w-3 text-green-600" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={cancelEditing}>
+                                  <X className="h-3 w-3 text-red-600" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <span 
+                                className="cursor-pointer hover:underline"
+                                onClick={() => startEditing(tx.trip_eats_id, 'user_name', tx.user_name)}
+                                title="Click to edit"
+                              >
+                                {tx.user_name}
+                              </span>
+                            )}
+                          </TableCell>
+                          {/* Service - Editable */}
+                          <TableCell>
+                            {editingCell?.id === tx.trip_eats_id && editingCell?.field === 'service' ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  value={editingValue}
+                                  onChange={(e) => setEditingValue(e.target.value)}
+                                  onKeyDown={handleEditKeyDown}
+                                  className="h-7 w-24"
+                                  autoFocus
+                                />
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={saveEditing}>
+                                  <Check className="h-3 w-3 text-green-600" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={cancelEditing}>
+                                  <X className="h-3 w-3 text-red-600" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <span 
+                                className="cursor-pointer hover:underline"
+                                onClick={() => startEditing(tx.trip_eats_id, 'service', tx.service)}
+                                title="Click to edit"
+                              >
+                                {tx.service}
+                              </span>
+                            )}
+                          </TableCell>
+                          {/* Program - Read-only */}
+                          <TableCell className="text-muted-foreground">
+                            {tx.program || '-'}
+                          </TableCell>
+                          {/* City - Editable */}
+                          <TableCell>
+                            {editingCell?.id === tx.trip_eats_id && editingCell?.field === 'city' ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  value={editingValue}
+                                  onChange={(e) => setEditingValue(e.target.value)}
+                                  onKeyDown={handleEditKeyDown}
+                                  className="h-7 w-24"
+                                  autoFocus
+                                />
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={saveEditing}>
+                                  <Check className="h-3 w-3 text-green-600" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={cancelEditing}>
+                                  <X className="h-3 w-3 text-red-600" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <span 
+                                className="cursor-pointer hover:underline"
+                                onClick={() => startEditing(tx.trip_eats_id, 'city', tx.city)}
+                                title="Click to edit"
+                              >
+                                {tx.city}
+                              </span>
+                            )}
+                          </TableCell>
+                          {/* Project - Editable */}
+                          <TableCell>
+                            {editingCell?.id === tx.trip_eats_id && editingCell?.field === 'project' ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  value={editingValue}
+                                  onChange={(e) => setEditingValue(e.target.value)}
+                                  onKeyDown={handleEditKeyDown}
+                                  className="h-7 w-24"
+                                  autoFocus
+                                />
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={saveEditing}>
+                                  <Check className="h-3 w-3 text-green-600" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={cancelEditing}>
+                                  <X className="h-3 w-3 text-red-600" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <span 
+                                className="cursor-pointer hover:underline"
+                                onClick={() => startEditing(tx.trip_eats_id, 'project', tx.project || '')}
+                                title="Click to edit"
+                              >
+                                {tx.project || '-'}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {tx.amount_usd ? formatCurrency(tx.amount_usd, 'USD') : '-'}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-muted-foreground">
+                            {formatCurrency(tx.amount_brl)}
+                          </TableCell>
+                          <TableCell className="text-right text-sm text-muted-foreground">
+                            {tx.ptax_rate?.toFixed(4) || '-'}
+                          </TableCell>
+                          <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
+                            {formatTime(tx.request_time_local)}
+                          </TableCell>
+                          <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
+                            {formatTime(tx.drop_off_time_local)}
+                          </TableCell>
                           <TableCell 
                             className="max-w-[200px] cursor-pointer hover:bg-muted/50"
                             onDoubleClick={() => handleAddressDoubleClick('Pickup Address', tx.pickup_address)}
@@ -890,15 +1203,6 @@ const UberPage = () => {
                             <span className="truncate block" title="Double-click to view full address">
                               {tx.dropoff_address || '-'}
                             </span>
-                          </TableCell>
-                          <TableCell className="text-right font-mono">
-                            {tx.amount_usd ? formatCurrency(tx.amount_usd, 'USD') : '-'}
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-muted-foreground">
-                            {formatCurrency(tx.amount_brl)}
-                          </TableCell>
-                          <TableCell className="text-right text-sm text-muted-foreground">
-                            {tx.ptax_rate?.toFixed(4) || '-'}
                           </TableCell>
                         </TableRow>
                       ))}

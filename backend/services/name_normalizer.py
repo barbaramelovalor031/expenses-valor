@@ -2,16 +2,17 @@
 Name normalizer service - Standardizes cardholder names across the application
 """
 
-# Canonical names (the standard format we want)
+# Canonical names (the standard format we want) - MUST MATCH CONSOLIDATED DATABASE
 CANONICAL_NAMES = [
     "Scott Sobel",
     "Clifford Sobel",
-    "John Douglas Smith",
+    "Doug Smith",  # Changed from "John Douglas Smith"
     "Michael Nicklas",
     "Paulo Passoni",
-    "Antoine Colaço",
+    "Antoine Colaco",  # Changed from "Antoine Colaço" (no cedilla)
     "Carlos Costa",
-    "Kelli Spangler",
+    "Daniel Schulman",
+    "Kelli SpanglerBallard",  # Changed from "Kelli Spangler"
 ]
 
 # Map all variations to canonical names (case-insensitive lookup)
@@ -31,21 +32,24 @@ NAME_ALIASES = {
     "cliff sobel": "Clifford Sobel",
     "sobel, clifford": "Clifford Sobel",
     
-    # John Douglas Smith (J. Douglas Smith variations)
-    "john douglas smith": "John Douglas Smith",
-    "j. douglas smith": "John Douglas Smith",
-    "j douglas smith": "John Douglas Smith",
-    "j.douglas smith": "John Douglas Smith",
-    "j.d. smith": "John Douglas Smith",
-    "j.d smith": "John Douglas Smith",
-    "jd smith": "John Douglas Smith",
-    "john d. smith": "John Douglas Smith",
-    "john d smith": "John Douglas Smith",
-    "douglas smith": "John Douglas Smith",
-    "smith, john": "John Douglas Smith",
-    "smith, j. douglas": "John Douglas Smith",
-    "smith, john douglas": "John Douglas Smith",
-    "j.douglas smith": "John Douglas Smith",
+    # Doug Smith (J. Douglas Smith variations on AMEX)
+    "doug smith": "Doug Smith",
+    "john douglas smith": "Doug Smith",
+    "j. douglas smith": "Doug Smith",
+    "j douglas smith": "Doug Smith",
+    "j.douglas smith": "Doug Smith",
+    "j.d. smith": "Doug Smith",
+    "j.d smith": "Doug Smith",
+    "jd smith": "Doug Smith",
+    "john d. smith": "Doug Smith",
+    "john d smith": "Doug Smith",
+    "douglas smith": "Doug Smith",
+    "smith, john": "Doug Smith",
+    "smith, j. douglas": "Doug Smith",
+    "smith, john douglas": "Doug Smith",
+    "smith, doug": "Doug Smith",
+    "d. smith": "Doug Smith",
+    "d smith": "Doug Smith",
     
     # Michael Nicklas
     "michael nicklas": "Michael Nicklas",
@@ -62,18 +66,20 @@ NAME_ALIASES = {
     "p.passoni": "Paulo Passoni",
     "passoni, paulo": "Paulo Passoni",
     
-    # Antoine Colaço
-    "antoine colaço": "Antoine Colaço",
-    "antoine colaco": "Antoine Colaço",
-    "a. colaço": "Antoine Colaço",
-    "a. colaco": "Antoine Colaço",
-    "a colaço": "Antoine Colaço",
-    "a colaco": "Antoine Colaço",
-    "a.colaço": "Antoine Colaço",
-    "a.colaco": "Antoine Colaço",
-    "colaço, antoine": "Antoine Colaço",
-    "colaco, antoine": "Antoine Colaço",
+    # Antoine Colaco (without cedilla in consolidated DB)
+    "antoine colaco": "Antoine Colaco",
+    "antoine colaço": "Antoine Colaco",  # With cedilla -> maps to no cedilla
+    "a. colaço": "Antoine Colaco",
+    "a. colaco": "Antoine Colaco",
+    "a colaço": "Antoine Colaco",
+    "a colaco": "Antoine Colaco",
+    "a.colaço": "Antoine Colaco",
+    "a.colaco": "Antoine Colaco",
+    "colaço, antoine": "Antoine Colaco",
+    "colaco, antoine": "Antoine Colaco",
     
+    "dan schulman": "Daniel Schulman",
+
     # Carlos Costa
     "carlos costa": "Carlos Costa",
     "c. costa": "Carlos Costa",
@@ -81,12 +87,15 @@ NAME_ALIASES = {
     "c.costa": "Carlos Costa",
     "costa, carlos": "Carlos Costa",
     
-    # Kelli Spangler
-    "kelli spangler": "Kelli Spangler",
-    "k. spangler": "Kelli Spangler",
-    "k spangler": "Kelli Spangler",
-    "k.spangler": "Kelli Spangler",
-    "spangler, kelli": "Kelli Spangler",
+    # Kelli SpanglerBallard (full name in consolidated DB)
+    "kelli spanglerballard": "Kelli SpanglerBallard",
+    "kelli spangler ballard": "Kelli SpanglerBallard",
+    "kelli spangler": "Kelli SpanglerBallard",  # AMEX may show shorter name
+    "k. spangler": "Kelli SpanglerBallard",
+    "k spangler": "Kelli SpanglerBallard",
+    "k.spangler": "Kelli SpanglerBallard",
+    "spangler, kelli": "Kelli SpanglerBallard",
+    "spanglerballard, kelli": "Kelli SpanglerBallard",
 }
 
 
