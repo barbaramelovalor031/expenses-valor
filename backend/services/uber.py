@@ -16,10 +16,9 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 import os
 
+from .bigquery_client import get_bigquery_client, PROJECT_ID, DATASET_ID
+
 # Configurações BigQuery
-SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "..", "credentials", "bq-service-account.json")
-PROJECT_ID = "automatic-bond-462415-h6"
-DATASET_ID = "finance"
 TABLE_ID = "uber_expenses"
 VALOR_TABLE_ID = "valor_expenses"
 FULL_TABLE_ID = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
@@ -29,13 +28,7 @@ FULL_VALOR_TABLE_ID = f"{PROJECT_ID}.{DATASET_ID}.{VALOR_TABLE_ID}"
 PTAX_CACHE = {}
 
 
-def get_bigquery_client():
-    """Cria cliente BigQuery usando service account"""
-    credentials = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=["https://www.googleapis.com/auth/bigquery"]
-    )
-    return bigquery.Client(credentials=credentials, project=PROJECT_ID)
+# get_bigquery_client is now imported from bigquery_client module
 
 
 def get_cotacao_dolar_ptax(data_iso: str) -> Optional[float]:

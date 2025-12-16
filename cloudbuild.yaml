@@ -44,10 +44,8 @@ steps:
       - '300'
       - '--set-env-vars'
       - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
-      - '--set-secrets'
-      - 'OPENAI_API_KEY=openai-api-key:latest,GOOGLE_APPLICATION_CREDENTIALS=/secrets/bq-credentials/bq-service-account.json'
       - '--update-secrets'
-      - '/secrets/bq-credentials/bq-service-account.json=bq-service-account:latest'
+      - 'OPENAI_API_KEY=openai-api-key:latest'
     id: 'deploy-backend'
     waitFor: ['push-backend']
 

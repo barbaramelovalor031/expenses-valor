@@ -15,9 +15,9 @@ from typing import List, Dict, Optional
 import pandas as pd
 from io import BytesIO
 
+from .bigquery_client import get_bigquery_client, PROJECT_ID, DATASET_ID
+
 # BigQuery configuration
-PROJECT_ID = "automatic-bond-462415-h6"
-DATASET_ID = "finance"
 RIPPLING_TABLE = "rippling_expenses"
 EMPLOYEES_TABLE = "rippling_employees"
 VALOR_TABLE = "valor_expenses"  # Main consolidated table
@@ -27,13 +27,7 @@ FULL_EMPLOYEES_TABLE = f"{PROJECT_ID}.{DATASET_ID}.{EMPLOYEES_TABLE}"
 FULL_VALOR_TABLE = f"{PROJECT_ID}.{DATASET_ID}.{VALOR_TABLE}"
 
 
-def get_bigquery_client():
-    """Get BigQuery client with credentials"""
-    credentials_path = os.path.join(os.path.dirname(__file__), '..', 'credentials', 'bq-service-account.json')
-    if os.path.exists(credentials_path):
-        credentials = service_account.Credentials.from_service_account_file(credentials_path)
-        return bigquery.Client(credentials=credentials, project=PROJECT_ID)
-    return bigquery.Client(project=PROJECT_ID)
+# get_bigquery_client is now imported from bigquery_client module
 
 
 def get_employee_mapping() -> Dict[str, dict]:
