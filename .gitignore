@@ -52,3 +52,5 @@ backend/credentials/
 
 # Jupyter notebooks with sensitive data
 *.ipynb
+google-cloud-sdk/
+google-cloud-cli-darwin-arm.tar.gz
