@@ -10,7 +10,21 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Lazy initialization of OpenAI client
+_openai_client = None
+
+def get_openai_client():
+    """Get or create OpenAI client with better error handling"""
+    global _openai_client
+    if _openai_client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            print("[ERROR] OPENAI_API_KEY environment variable is not set!")
+            raise ValueError("OPENAI_API_KEY not configured")
+        print(f"[INFO] Initializing OpenAI client with key: {api_key[:8]}...{api_key[-4:]}")
+        _openai_client = OpenAI(api_key=api_key)
+    return _openai_client
 
 # -----------------------------
 # 1. CONSTANTES E CONFIGURAÇÃO
@@ -428,7 +442,8 @@ def categorize_with_llm(descriptions: List[str]) -> List[str]:
         batch_prompt = build_llm_prompt(batch_descriptions)
 
         try:
-            response = client.chat.completions.create(
+            openai_client = get_openai_client()
+            response = openai_client.chat.completions.create(
                 model="gpt-4.1",
                 messages=[
                     {
@@ -465,7 +480,9 @@ def categorize_with_llm(descriptions: List[str]) -> List[str]:
                     batch_categories += [""] * (len(batch_descriptions) - len(batch_categories))
 
         except Exception as e:
-            print(f"[ERROR] LLM batch categorization failed: {e}")
+            import traceback
+            print(f"[ERROR] LLM batch categorization failed: {type(e).__name__}: {e}")
+            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
             batch_categories = [""] * len(batch_descriptions)
 
         all_categories.extend(batch_categories)
