@@ -3,6 +3,7 @@ import pandas as pd
 import re
 from datetime import datetime, timedelta
 import requests
+from services.name_normalizer import normalize_name
 
 def normalize(s: str) -> str:
     return s.replace("\u00a0", " ").strip() if s else ""
@@ -95,7 +96,7 @@ def extract_bradesco(pdf_file) -> dict:
 
         m_name = re.search(r"^Nome:\s*(.+)$", l, flags=re.IGNORECASE)
         if m_name:
-            holder = m_name.group(1).strip()
+            holder = normalize_name(m_name.group(1).strip())
 
     if year is None:
         m_any = re.search(r"(20\d{2})", " ".join(lines))

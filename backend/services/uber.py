@@ -93,7 +93,7 @@ def clean_column_name(col: str) -> str:
 UBER_NAME_NORMALIZATIONS = {
     "Antoine": {"Colaço": "Colaco"},
     "Lana": {"Brandão": "Brandao"},
-    "Kelli": {"Spangler": "SpanglerBallard"},
+    "Kelli": {"Spangler": "Spangler-Ballard"},
 }
 
 # Mapeamento para normalizar first_name (remove acentos)

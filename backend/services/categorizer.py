@@ -164,6 +164,7 @@ TELECOM_KEYWORDS = [
     "VIVO",
     "TIM ",
     " OI ",
+    "VOCALIP",
 ]
 
 TRAINING_KEYWORDS = [

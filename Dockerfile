@@ -30,6 +30,11 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # Copy built files
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Fix permissions for all static files
+RUN chmod -R 644 /usr/share/nginx/html/* && \
+    chmod 755 /usr/share/nginx/html && \
+    chmod 755 /usr/share/nginx/html/assets
+
 # Expose port
 EXPOSE 8080
 

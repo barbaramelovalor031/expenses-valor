@@ -12,7 +12,8 @@ CANONICAL_NAMES = [
     "Antoine Colaco",  # Changed from "Antoine Colaço" (no cedilla)
     "Carlos Costa",
     "Daniel Schulman",
-    "Kelli SpanglerBallard",  # Changed from "Kelli Spangler"
+    "Kelli Spangler-Ballard",
+    "Felipe Mendes",  # Bradesco card - FELIPE M SANTOS
 ]
 
 # Map all variations to canonical names (case-insensitive lookup)
@@ -87,15 +88,28 @@ NAME_ALIASES = {
     "c.costa": "Carlos Costa",
     "costa, carlos": "Carlos Costa",
     
-    # Kelli SpanglerBallard (full name in consolidated DB)
-    "kelli spanglerballard": "Kelli SpanglerBallard",
-    "kelli spangler ballard": "Kelli SpanglerBallard",
-    "kelli spangler": "Kelli SpanglerBallard",  # AMEX may show shorter name
-    "k. spangler": "Kelli SpanglerBallard",
-    "k spangler": "Kelli SpanglerBallard",
-    "k.spangler": "Kelli SpanglerBallard",
-    "spangler, kelli": "Kelli SpanglerBallard",
-    "spanglerballard, kelli": "Kelli SpanglerBallard",
+    # Kelli Spangler-Ballard
+    "kelli spangler-ballard": "Kelli Spangler-Ballard",
+    "kelli spanglerballard": "Kelli Spangler-Ballard",
+    "kelli spangler ballard": "Kelli Spangler-Ballard",
+    "kelli spangler": "Kelli Spangler-Ballard",  # AMEX may show shorter name
+    "k. spangler": "Kelli Spangler-Ballard",
+    "k spangler": "Kelli Spangler-Ballard",
+    "k.spangler": "Kelli Spangler-Ballard",
+    "spangler, kelli": "Kelli Spangler-Ballard",
+    "spanglerballard, kelli": "Kelli Spangler-Ballard",
+    "spangler-ballard, kelli": "Kelli Spangler-Ballard",
+    
+    # Felipe Mendes (Bradesco card - AMEX style name)
+    "felipe mendes": "Felipe Mendes",
+    "felipe m santos": "Felipe Mendes",
+    "felipe m. santos": "Felipe Mendes",
+    "f. mendes": "Felipe Mendes",
+    "f mendes": "Felipe Mendes",
+    "f.mendes": "Felipe Mendes",
+    "mendes, felipe": "Felipe Mendes",
+    "santos, felipe m": "Felipe Mendes",
+    "santos, felipe": "Felipe Mendes",
 }
 
 
@@ -114,6 +128,12 @@ def normalize_name(name: str) -> str:
     
     # Clean up the name
     cleaned = name.strip().lower()
+    
+    # Remove card type suffixes (e.g., "- AMEX", "- VISA", "- MASTERCARD")
+    for suffix in [" - amex", " - visa", " - mastercard", " - mc", " - bradesco"]:
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[:-len(suffix)].strip()
+    
     # Remove extra spaces
     cleaned = " ".join(cleaned.split())
     
