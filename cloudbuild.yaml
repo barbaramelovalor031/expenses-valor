@@ -1,6 +1,9 @@
 # Cloud Build configuration for deploying to Cloud Run
 # This file deploys both frontend and backend
 
+substitutions:
+  _TAG: 'latest'
+
 steps:
   # ========== BACKEND ==========
   # Build backend Docker image
@@ -8,9 +11,7 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/expenses-backend:$COMMIT_SHA'
-      - '-t'
-      - 'gcr.io/$PROJECT_ID/expenses-backend:latest'
+      - 'gcr.io/$PROJECT_ID/expenses-backend:${_TAG}'
       - './backend'
     id: 'build-backend'
 
@@ -18,7 +19,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/expenses-backend:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/expenses-backend:${_TAG}'
     id: 'push-backend'
     waitFor: ['build-backend']
 
@@ -30,7 +31,7 @@ steps:
       - 'deploy'
       - 'expenses-backend'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/expenses-backend:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/expenses-backend:${_TAG}'
       - '--region'
       - 'us-central1'
       - '--platform'
@@ -70,8 +71,7 @@ steps:
         BACKEND_URL=$(cat /workspace/backend_url.txt)
         docker build \
           --build-arg VITE_API_URL=$${BACKEND_URL} \
-          -t gcr.io/$PROJECT_ID/expenses-frontend:$COMMIT_SHA \
-          -t gcr.io/$PROJECT_ID/expenses-frontend:latest \
+          -t gcr.io/$PROJECT_ID/expenses-frontend:${_TAG} \
           .
     id: 'build-frontend'
     waitFor: ['get-backend-url']
@@ -80,7 +80,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/expenses-frontend:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/expenses-frontend:${_TAG}'
     id: 'push-frontend'
     waitFor: ['build-frontend']
 
@@ -92,7 +92,7 @@ steps:
       - 'deploy'
       - 'expenses-frontend'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/expenses-frontend:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/expenses-frontend:${_TAG}'
       - '--region'
       - 'us-central1'
       - '--platform'
@@ -107,10 +107,8 @@ steps:
 
 # Store images in Container Registry
 images:
-  - 'gcr.io/$PROJECT_ID/expenses-backend:$COMMIT_SHA'
-  - 'gcr.io/$PROJECT_ID/expenses-backend:latest'
-  - 'gcr.io/$PROJECT_ID/expenses-frontend:$COMMIT_SHA'
-  - 'gcr.io/$PROJECT_ID/expenses-frontend:latest'
+  - 'gcr.io/$PROJECT_ID/expenses-backend:${_TAG}'
+  - 'gcr.io/$PROJECT_ID/expenses-frontend:${_TAG}'
 
 # Build timeout
 timeout: '1800s'
