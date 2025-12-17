@@ -79,7 +79,7 @@ const ITSubscriptionsDashboard = () => {
   
   // Data states
   const [expenses, setExpenses] = useState<ITExpense[]>([]);
-  const [selectedYear, setSelectedYear] = useState<number>(2025);
+  const [selectedYear, setSelectedYear] = useState<string>('2025');
   const [isLoading, setIsLoading] = useState(true);
   const [isExtractingVendors, setIsExtractingVendors] = useState(false);
   
@@ -97,7 +97,8 @@ const ITSubscriptionsDashboard = () => {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/it-subscriptions?year=${selectedYear}`);
+      const yearParam = selectedYear === 'all' ? '' : `year=${selectedYear}`;
+      const response = await fetch(`${API_BASE_URL}/it-subscriptions?${yearParam}`);
       if (!response.ok) throw new Error('Failed to load data');
       const data = await response.json();
       setExpenses(data.expenses || []);
@@ -151,10 +152,11 @@ const ITSubscriptionsDashboard = () => {
   const extractVendors = async () => {
     setIsExtractingVendors(true);
     try {
+      const yearParam = selectedYear === 'all' ? null : parseInt(selectedYear);
       const response = await fetch(`${API_BASE_URL}/it-subscriptions/extract-vendors`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ year: selectedYear }),
+        body: JSON.stringify({ year: yearParam }),
       });
       if (!response.ok) throw new Error('Failed to extract vendors');
       const result = await response.json();
@@ -278,7 +280,7 @@ const ITSubscriptionsDashboard = () => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'IT Subscriptions');
       
-      let filename = `it_subscriptions_${selectedYear}`;
+      let filename = `it_subscriptions_${selectedYear === 'all' ? 'all_years' : selectedYear}`;
       if (filterEmployee !== 'all') filename += `_${filterEmployee.replace(/\s+/g, '_')}`;
       if (filterVendor !== 'all') filename += `_${filterVendor.replace(/\s+/g, '_')}`;
       if (filterDateFrom) filename += `_from_${filterDateFrom}`;
@@ -319,13 +321,14 @@ const ITSubscriptionsDashboard = () => {
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(parseInt(v))}>
-                <SelectTrigger className="w-[100px]">
+              <Select value={selectedYear} onValueChange={setSelectedYear}>
+                <SelectTrigger className="w-[120px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="2024">2024</SelectItem>
+                  <SelectItem value="all">All Years</SelectItem>
                   <SelectItem value="2025">2025</SelectItem>
+                  <SelectItem value="2024">2024</SelectItem>
                 </SelectContent>
               </Select>
               <Button variant="outline" onClick={loadData} disabled={isLoading}>

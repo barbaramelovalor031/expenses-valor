@@ -91,7 +91,7 @@ const TravelDashboard = () => {
   
   // Data states
   const [allExpenses, setAllExpenses] = useState<ValorExpense[]>([]);
-  const [selectedYear, setSelectedYear] = useState<number>(2025);
+  const [selectedYear, setSelectedYear] = useState<string>('2025');
   const [isLoading, setIsLoading] = useState(true);
   
   // Filters
@@ -113,7 +113,9 @@ const TravelDashboard = () => {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await getValorExpenses(selectedYear);
+      const yearParam = selectedYear === 'all' ? undefined : Number(selectedYear);
+      const limit = selectedYear === 'all' ? 20000 : 5000;
+      const result = await getValorExpenses(yearParam, undefined, undefined, undefined, undefined, undefined, limit);
       setAllExpenses(result.expenses || []);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -332,7 +334,7 @@ const TravelDashboard = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `travel_expenses_${selectedYear}.csv`;
+    link.download = `travel_expenses_${selectedYear === 'all' ? 'all_years' : selectedYear}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -366,7 +368,7 @@ const TravelDashboard = () => {
     link.href = url;
     
     // Build filename with filter info
-    let filename = `travel_by_employee_${selectedYear}`;
+    let filename = `travel_by_employee_${selectedYear === 'all' ? 'all_years' : selectedYear}`;
     if (byEmpFilterEmployee !== 'all') filename += `_${byEmpFilterEmployee.replace(/\s+/g, '_')}`;
     if (byEmpDateFrom) filename += `_from_${byEmpDateFrom}`;
     if (byEmpDateTo) filename += `_to_${byEmpDateTo}`;
@@ -410,12 +412,13 @@ const TravelDashboard = () => {
             </p>
           </div>
           <div className="flex gap-2">
-            <Select value={String(selectedYear)} onValueChange={(val) => setSelectedYear(Number(val))}>
-              <SelectTrigger className="w-[120px]">
+            <Select value={selectedYear} onValueChange={setSelectedYear}>
+              <SelectTrigger className="w-[130px]">
                 <Calendar className="w-4 h-4 mr-2" />
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="all">All Years</SelectItem>
                 <SelectItem value="2025">2025</SelectItem>
                 <SelectItem value="2024">2024</SelectItem>
               </SelectContent>

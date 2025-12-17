@@ -112,8 +112,8 @@ const ExpensesYTD = () => {
     setIsLoading(true);
     try {
       const yearParam = selectedYear === 'all' ? undefined : Number(selectedYear);
-      // Use higher limit for "All Years" to get all data
-      const limit = selectedYear === 'all' ? 50000 : 10000;
+      // Use reasonable limit - 15000 should cover most cases
+      const limit = selectedYear === 'all' ? 15000 : 5000;
       
       const [
         expensesResult,
