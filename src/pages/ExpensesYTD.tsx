@@ -112,6 +112,8 @@ const ExpensesYTD = () => {
     setIsLoading(true);
     try {
       const yearParam = selectedYear === 'all' ? undefined : Number(selectedYear);
+      // Use higher limit for "All Years" to get all data
+      const limit = selectedYear === 'all' ? 50000 : 10000;
       
       const [
         expensesResult,
@@ -122,7 +124,7 @@ const ExpensesYTD = () => {
         namesResult,
         vendorsResult
       ] = await Promise.all([
-        getValorExpenses(yearParam),
+        getValorExpenses(yearParam, undefined, undefined, undefined, undefined, undefined, limit),
         getValorExpensesByEmployee(yearParam),
         getValorSummary(yearParam),
         getValorYears(),
@@ -327,9 +329,31 @@ const ExpensesYTD = () => {
     return { topCategories, topNames, topVendors, monthlyData, totalFiltered, byCategory, uniqueEmployees, uniqueCategories };
   }, [filteredExpenses]);
 
+  // Calculate totals from loaded expenses (for "All Years" mode)
+  const loadedDataTotals = useMemo(() => {
+    const grandTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
+    const employeeCount = new Set(expenses.map(e => e.name)).size;
+    const transactionCount = expenses.length;
+    const categoryCount = new Set(expenses.map(e => e.category)).size;
+    return { grandTotal, employeeCount, transactionCount, categoryCount };
+  }, [expenses]);
+
   // Check if any filters are active
   const hasActiveFilters = filterName !== 'all' || filterCategory !== 'all' || filterVendor !== 'all' || 
     filterSource !== 'all' || filterProject !== 'all' || searchTerm !== '' || filterDateFrom !== '' || filterDateTo !== '';
+
+  // Use loaded data totals when "All Years" is selected, otherwise use API summary
+  const effectiveSummary = useMemo(() => {
+    if (selectedYear === 'all') {
+      return {
+        grand_total: loadedDataTotals.grandTotal,
+        employee_count: loadedDataTotals.employeeCount,
+        transaction_count: loadedDataTotals.transactionCount,
+        category_count: loadedDataTotals.categoryCount
+      };
+    }
+    return summary;
+  }, [selectedYear, loadedDataTotals, summary]);
 
   // Category totals for pivot table
   const categoryTotals = useMemo(() => {
@@ -662,11 +686,11 @@ const ExpensesYTD = () => {
                 {hasActiveFilters ? 'Filtered Total' : 'Grand Total'}
               </CardDescription>
               <CardTitle className="text-2xl text-green-600">
-                {formatCurrencyFull(hasActiveFilters ? dashboardStats.totalFiltered : (summary?.grand_total || 0))}
+                {formatCurrencyFull(hasActiveFilters ? dashboardStats.totalFiltered : (effectiveSummary?.grand_total || 0))}
               </CardTitle>
-              {hasActiveFilters && summary?.grand_total && (
+              {hasActiveFilters && effectiveSummary?.grand_total && (
                 <p className="text-xs text-muted-foreground">
-                  of {formatCurrencyFull(summary.grand_total)} total
+                  of {formatCurrencyFull(effectiveSummary.grand_total)} total
                 </p>
               )}
             </CardHeader>
@@ -676,11 +700,11 @@ const ExpensesYTD = () => {
               <CardDescription>Employees</CardDescription>
               <CardTitle className="text-2xl flex items-center gap-2">
                 <Users className="w-5 h-5 text-blue-600" />
-                {hasActiveFilters ? dashboardStats.uniqueEmployees : (summary?.employee_count || 0)}
+                {hasActiveFilters ? dashboardStats.uniqueEmployees : (effectiveSummary?.employee_count || 0)}
               </CardTitle>
-              {hasActiveFilters && summary?.employee_count && (
+              {hasActiveFilters && effectiveSummary?.employee_count && (
                 <p className="text-xs text-muted-foreground">
-                  of {summary.employee_count} total
+                  of {effectiveSummary.employee_count} total
                 </p>
               )}
             </CardHeader>
@@ -689,11 +713,11 @@ const ExpensesYTD = () => {
             <CardHeader className="pb-2">
               <CardDescription>Transactions</CardDescription>
               <CardTitle className="text-2xl">
-                {hasActiveFilters ? filteredExpenses.length : (summary?.transaction_count || 0)}
+                {hasActiveFilters ? filteredExpenses.length : (effectiveSummary?.transaction_count || 0)}
               </CardTitle>
-              {hasActiveFilters && summary?.transaction_count && (
+              {hasActiveFilters && effectiveSummary?.transaction_count && (
                 <p className="text-xs text-muted-foreground">
-                  of {summary.transaction_count} total
+                  of {effectiveSummary.transaction_count} total
                 </p>
               )}
             </CardHeader>
@@ -702,11 +726,11 @@ const ExpensesYTD = () => {
             <CardHeader className="pb-2">
               <CardDescription>Categories</CardDescription>
               <CardTitle className="text-2xl text-purple-600">
-                {hasActiveFilters ? dashboardStats.uniqueCategories : categories.length}
+                {hasActiveFilters ? dashboardStats.uniqueCategories : (effectiveSummary?.category_count || categories.length)}
               </CardTitle>
-              {hasActiveFilters && categories.length > 0 && (
+              {hasActiveFilters && (effectiveSummary?.category_count || categories.length) > 0 && (
                 <p className="text-xs text-muted-foreground">
-                  of {categories.length} total
+                  of {effectiveSummary?.category_count || categories.length} total
                 </p>
               )}
             </CardHeader>
