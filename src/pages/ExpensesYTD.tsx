@@ -80,7 +80,7 @@ const ExpensesYTD = () => {
   const [names, setNames] = useState<string[]>([]);
   const [vendors, setVendors] = useState<string[]>([]);
   const [availableYears, setAvailableYears] = useState<number[]>([2025]);
-  const [selectedYear, setSelectedYear] = useState<number>(2025);
+  const [selectedYear, setSelectedYear] = useState<string>('2025'); // Can be 'all' or year number
   const [isLoading, setIsLoading] = useState(true);
   
   // Filters for detailed view
@@ -111,6 +111,8 @@ const ExpensesYTD = () => {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
+      const yearParam = selectedYear === 'all' ? undefined : Number(selectedYear);
+      
       const [
         expensesResult,
         byEmployeeResult,
@@ -120,9 +122,9 @@ const ExpensesYTD = () => {
         namesResult,
         vendorsResult
       ] = await Promise.all([
-        getValorExpenses(selectedYear),
-        getValorExpensesByEmployee(selectedYear),
-        getValorSummary(selectedYear),
+        getValorExpenses(yearParam),
+        getValorExpensesByEmployee(yearParam),
+        getValorSummary(yearParam),
         getValorYears(),
         getValorCategories(),
         getValorNames(),
@@ -616,16 +618,17 @@ const ExpensesYTD = () => {
               Consolidated Expenses
             </h1>
             <p className="text-muted-foreground mt-1">
-              Year-to-date expenses from valor_expenses table
+              {selectedYear === 'all' ? 'All expenses from valor_expenses table' : 'Year-to-date expenses from valor_expenses table'}
             </p>
           </div>
           <div className="flex gap-2">
-            <Select value={String(selectedYear)} onValueChange={(val) => setSelectedYear(Number(val))}>
-              <SelectTrigger className="w-[120px]">
+            <Select value={selectedYear} onValueChange={setSelectedYear}>
+              <SelectTrigger className="w-[130px]">
                 <Calendar className="w-4 h-4 mr-2" />
                 <SelectValue placeholder="Year" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="all">All Years</SelectItem>
                 {availableYears.map(year => (
                   <SelectItem key={year} value={String(year)}>{year}</SelectItem>
                 ))}
@@ -795,7 +798,7 @@ const ExpensesYTD = () => {
                   <div className="space-y-2">
                     {dashboardStats.monthlyData.map(({ month, amount }) => (
                       <div key={month} className="flex items-center justify-between">
-                        <span className="text-sm">{MONTH_NAMES[month]} {selectedYear}</span>
+                        <span className="text-sm">{MONTH_NAMES[month]} {selectedYear === 'all' ? '' : selectedYear}</span>
                         <span className="font-medium text-sm">{formatCurrency(amount)}</span>
                       </div>
                     ))}
