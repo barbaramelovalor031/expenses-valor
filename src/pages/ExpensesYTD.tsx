@@ -343,9 +343,9 @@ const ExpensesYTD = () => {
   }, [filteredByEmployee]);
 
   const exportToCSV = () => {
-    if (!expenses.length) return;
+    if (!filteredExpenses.length) return;
 
-    const headers = ['Name', 'Amount', 'Category', 'Date', 'Vendor', 'Source', 'Year', 'Month'];
+    const headers = ['Name', 'Amount', 'Category', 'Date', 'Vendor', 'Source', 'Year', 'Month', 'Project'];
     const rows = filteredExpenses.map(exp => [
       `"${exp.name}"`,
       exp.amount,
@@ -354,7 +354,8 @@ const ExpensesYTD = () => {
       `"${exp.vendor || ''}"`,
       `"${exp.source || ''}"`,
       exp.year || '',
-      exp.month || ''
+      exp.month || '',
+      `"${exp.project || ''}"`
     ]);
 
     const csvContent = [
@@ -366,7 +367,92 @@ const ExpensesYTD = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Valor_Expenses_${selectedYear}.csv`;
+    
+    // Build dynamic filename based on filters
+    let filename = `Valor_Expenses`;
+    if (hasActiveFilters) {
+      if (filterName !== 'all') filename += `_${filterName.replace(/\s+/g, '_')}`;
+      if (filterCategory !== 'all') filename += `_${filterCategory.replace(/\s+/g, '_')}`;
+      if (filterDateFrom && filterDateTo) filename += `_${filterDateFrom}_to_${filterDateTo}`;
+      else if (filterDateFrom) filename += `_from_${filterDateFrom}`;
+      else if (filterDateTo) filename += `_to_${filterDateTo}`;
+    } else {
+      filename += `_${selectedYear}`;
+    }
+    filename += '.csv';
+    
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Export by Category - creates a CSV with categories as rows and monthly totals as columns
+  const exportByCategoryCSV = () => {
+    if (!filteredExpenses.length) return;
+
+    // Build category x month data
+    const categoryMonthData: Record<string, Record<number, number>> = {};
+    const categoryTotals: Record<string, number> = {};
+    const monthTotals: Record<number, number> = {};
+    let grandTotal = 0;
+
+    filteredExpenses.forEach(exp => {
+      if (!categoryMonthData[exp.category]) {
+        categoryMonthData[exp.category] = {};
+        categoryTotals[exp.category] = 0;
+      }
+      const month = exp.month || 0;
+      categoryMonthData[exp.category][month] = (categoryMonthData[exp.category][month] || 0) + exp.amount;
+      categoryTotals[exp.category] += exp.amount;
+      monthTotals[month] = (monthTotals[month] || 0) + exp.amount;
+      grandTotal += exp.amount;
+    });
+
+    // Get sorted categories and months present in data
+    const sortedCats = Object.keys(categoryMonthData).sort();
+    const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    // Build headers
+    const headers = ['Category', ...monthNames, 'Total'];
+    
+    // Build rows
+    const rows = sortedCats.map(cat => [
+      `"${cat}"`,
+      ...months.map(m => categoryMonthData[cat][m] || 0),
+      categoryTotals[cat] || 0
+    ]);
+
+    // Add totals row
+    rows.push([
+      '"TOTAL"',
+      ...months.map(m => monthTotals[m] || 0),
+      grandTotal
+    ]);
+
+    const csvContent = [
+      headers.map(h => `"${h}"`).join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    
+    // Build filename
+    let filename = `Expenses_by_Category`;
+    if (hasActiveFilters) {
+      if (filterName !== 'all') filename += `_${filterName.replace(/\s+/g, '_')}`;
+      if (filterDateFrom && filterDateTo) filename += `_${filterDateFrom}_to_${filterDateTo}`;
+      else if (filterDateFrom) filename += `_from_${filterDateFrom}`;
+      else if (filterDateTo) filename += `_to_${filterDateTo}`;
+    } else {
+      filename += `_${selectedYear}`;
+    }
+    filename += '.csv';
+    
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -549,18 +635,18 @@ const ExpensesYTD = () => {
               <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
-            <Button onClick={exportToCSV} disabled={!expenses.length}>
+            <Button onClick={exportToCSV} disabled={!filteredExpenses.length}>
               <Download className="w-4 h-4 mr-2" />
               Export CSV
             </Button>
             <Button 
               variant="default"
-              onClick={() => window.open(`${API_BASE_URL}/valor/export-by-category/${selectedYear}`, '_blank')}
-              disabled={!expenses.length}
+              onClick={exportByCategoryCSV}
+              disabled={!filteredExpenses.length}
               className="bg-green-600 hover:bg-green-700"
             >
               <FileSpreadsheet className="w-4 h-4 mr-2" />
-              Export Excel by Category
+              Export by Category
             </Button>
           </div>
         </div>
