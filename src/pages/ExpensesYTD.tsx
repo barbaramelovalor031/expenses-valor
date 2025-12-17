@@ -319,9 +319,15 @@ const ExpensesYTD = () => {
       .sort((a, b) => a.month - b.month);
     
     const totalFiltered = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+    const uniqueEmployees = new Set(filteredExpenses.map(e => e.name)).size;
+    const uniqueCategories = new Set(filteredExpenses.map(e => e.category)).size;
     
-    return { topCategories, topNames, topVendors, monthlyData, totalFiltered, byCategory };
+    return { topCategories, topNames, topVendors, monthlyData, totalFiltered, byCategory, uniqueEmployees, uniqueCategories };
   }, [filteredExpenses]);
+
+  // Check if any filters are active
+  const hasActiveFilters = filterName !== 'all' || filterCategory !== 'all' || filterVendor !== 'all' || 
+    filterSource !== 'all' || filterProject !== 'all' || searchTerm !== '' || filterDateFrom !== '' || filterDateTo !== '';
 
   // Category totals for pivot table
   const categoryTotals = useMemo(() => {
@@ -563,10 +569,17 @@ const ExpensesYTD = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>Grand Total</CardDescription>
+              <CardDescription>
+                {hasActiveFilters ? 'Filtered Total' : 'Grand Total'}
+              </CardDescription>
               <CardTitle className="text-2xl text-green-600">
-                {formatCurrencyFull(summary?.grand_total || 0)}
+                {formatCurrencyFull(hasActiveFilters ? dashboardStats.totalFiltered : (summary?.grand_total || 0))}
               </CardTitle>
+              {hasActiveFilters && summary?.grand_total && (
+                <p className="text-xs text-muted-foreground">
+                  of {formatCurrencyFull(summary.grand_total)} total
+                </p>
+              )}
             </CardHeader>
           </Card>
           <Card>
@@ -574,24 +587,39 @@ const ExpensesYTD = () => {
               <CardDescription>Employees</CardDescription>
               <CardTitle className="text-2xl flex items-center gap-2">
                 <Users className="w-5 h-5 text-blue-600" />
-                {summary?.employee_count || 0}
+                {hasActiveFilters ? dashboardStats.uniqueEmployees : (summary?.employee_count || 0)}
               </CardTitle>
+              {hasActiveFilters && summary?.employee_count && (
+                <p className="text-xs text-muted-foreground">
+                  of {summary.employee_count} total
+                </p>
+              )}
             </CardHeader>
           </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardDescription>Transactions</CardDescription>
               <CardTitle className="text-2xl">
-                {summary?.transaction_count || 0}
+                {hasActiveFilters ? filteredExpenses.length : (summary?.transaction_count || 0)}
               </CardTitle>
+              {hasActiveFilters && summary?.transaction_count && (
+                <p className="text-xs text-muted-foreground">
+                  of {summary.transaction_count} total
+                </p>
+              )}
             </CardHeader>
           </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardDescription>Categories</CardDescription>
               <CardTitle className="text-2xl text-purple-600">
-                {categories.length}
+                {hasActiveFilters ? dashboardStats.uniqueCategories : categories.length}
               </CardTitle>
+              {hasActiveFilters && categories.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  of {categories.length} total
+                </p>
+              )}
             </CardHeader>
           </Card>
         </div>
