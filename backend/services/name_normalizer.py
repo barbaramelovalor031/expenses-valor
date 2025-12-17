@@ -80,6 +80,10 @@ NAME_ALIASES = {
     "colaco, antoine": "Antoine Colaco",
     
     "dan schulman": "Daniel Schulman",
+    "daniel schulman": "Daniel Schulman",
+    "d. schulman": "Daniel Schulman",
+    "d schulman": "Daniel Schulman",
+    "schulman, daniel": "Daniel Schulman",
 
     # Carlos Costa
     "carlos costa": "Carlos Costa",
@@ -93,6 +97,7 @@ NAME_ALIASES = {
     "kelli spanglerballard": "Kelli Spangler-Ballard",
     "kelli spangler ballard": "Kelli Spangler-Ballard",
     "kelli spangler": "Kelli Spangler-Ballard",  # AMEX may show shorter name
+    "kelli": "Kelli Spangler-Ballard",  # Just first name
     "k. spangler": "Kelli Spangler-Ballard",
     "k spangler": "Kelli Spangler-Ballard",
     "k.spangler": "Kelli Spangler-Ballard",

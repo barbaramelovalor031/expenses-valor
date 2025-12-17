@@ -729,11 +729,15 @@ export async function uploadRipplingFile(file: File): Promise<{
 export async function getRipplingExpenses(
   batchId?: string,
   limit: number = 1000,
-  year?: number
+  year?: number,
+  startDate?: string,
+  endDate?: string
 ): Promise<{ expenses: RipplingExpense[]; count: number }> {
   const params = new URLSearchParams();
   if (batchId) params.append('batch_id', batchId);
   if (year) params.append('year', year.toString());
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
   params.append('limit', limit.toString());
   
   const response = await fetch(`${API_URL}/rippling-expenses?${params}`);
@@ -859,6 +863,8 @@ export async function getValorExpenses(
   month?: number,
   name?: string,
   category?: string,
+  startDate?: string,
+  endDate?: string,
   limit: number = 5000
 ): Promise<{ expenses: ValorExpense[]; total: number }> {
   const params = new URLSearchParams();
@@ -866,6 +872,8 @@ export async function getValorExpenses(
   if (month) params.append('month', month.toString());
   if (name) params.append('name', name);
   if (category) params.append('category', category);
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
   params.append('limit', limit.toString());
 
   const response = await fetch(`${API_URL}/valor-expenses?${params}`);
@@ -879,10 +887,14 @@ export async function getValorExpenses(
 }
 
 export async function getValorExpensesByEmployee(
-  year?: number
+  year?: number,
+  startDate?: string,
+  endDate?: string
 ): Promise<{ expenses: ValorExpenseByEmployee[]; total: number }> {
   const params = new URLSearchParams();
   if (year) params.append('year', year.toString());
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
 
   const response = await fetch(`${API_URL}/valor-expenses/by-employee?${params}`);
 
@@ -1030,6 +1042,7 @@ export interface UberExpenseUpdate {
   category?: string;
   amount?: number;
   vendor?: string;
+  project?: string;
 }
 
 export async function updateUberExpense(
@@ -1081,5 +1094,173 @@ export async function deleteUberExpensesBatch(
     throw new Error(error.detail || 'Error deleting Uber expenses');
   }
 
+  return response.json();
+}
+
+// =====================================================
+// MICHAEL CARD API
+// =====================================================
+
+export interface MichaelExpense {
+  id: string;
+  date: string | null;
+  description: string;
+  card_member: string;
+  amount: number;
+  category: string;
+  project?: string;
+  batch_id?: string;
+  created_at?: string;
+  synced_to_valor: boolean;
+  valor_expense_id?: string;
+}
+
+export interface MichaelBatch {
+  batch_id: string;
+  created_at: string | null;
+  transaction_count: number;
+  total_amount: number;
+}
+
+export interface MichaelSummary {
+  total_count: number;
+  total_amount: number;
+  synced_count: number;
+  synced_amount: number;
+  unsynced_count: number;
+  unsynced_amount: number;
+}
+
+export interface MichaelExpenseInput {
+  date: string;
+  description: string;
+  card_member?: string;
+  amount: number;
+  category: string;
+  project?: string;
+}
+
+export async function getMichaelExpenses(
+  year?: number,
+  limit: number = 1000
+): Promise<{ expenses: MichaelExpense[]; count: number }> {
+  const params = new URLSearchParams();
+  if (year) params.append('year', year.toString());
+  params.append('limit', limit.toString());
+  
+  const response = await fetch(`${API_URL}/michael-expenses?${params}`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error fetching Michael expenses');
+  }
+  
+  return response.json();
+}
+
+export async function getMichaelBatches(): Promise<{ batches: MichaelBatch[] }> {
+  const response = await fetch(`${API_URL}/michael-expenses/batches`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error fetching Michael batches');
+  }
+  
+  return response.json();
+}
+
+export async function getMichaelSummary(year?: number): Promise<MichaelSummary> {
+  const params = new URLSearchParams();
+  if (year) params.append('year', year.toString());
+  
+  const response = await fetch(`${API_URL}/michael-expenses/summary?${params}`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error fetching Michael summary');
+  }
+  
+  return response.json();
+}
+
+export async function addMichaelExpenses(
+  expenses: MichaelExpenseInput[]
+): Promise<{ success: boolean; batch_id: string; added_count: number; total_amount: number }> {
+  const response = await fetch(`${API_URL}/michael-expenses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expenses }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error adding Michael expenses');
+  }
+  
+  return response.json();
+}
+
+export async function updateMichaelExpense(
+  expenseId: string,
+  updates: Partial<{ category: string; project: string; description: string; amount: number; date: string }>
+): Promise<{ success: boolean; synced_valor: boolean }> {
+  const response = await fetch(`${API_URL}/michael-expenses/${expenseId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error updating Michael expense');
+  }
+  
+  return response.json();
+}
+
+export async function deleteMichaelExpense(
+  expenseId: string
+): Promise<{ success: boolean; deleted_amount: number }> {
+  const response = await fetch(`${API_URL}/michael-expenses/${expenseId}`, {
+    method: 'DELETE',
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error deleting Michael expense');
+  }
+  
+  return response.json();
+}
+
+export async function deleteMichaelBatch(
+  batchId: string
+): Promise<{ success: boolean; deleted_count: number; total_amount: number }> {
+  const response = await fetch(`${API_URL}/michael-expenses/batches/${batchId}`, {
+    method: 'DELETE',
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error deleting Michael batch');
+  }
+  
+  return response.json();
+}
+
+export async function syncMichaelToValor(
+  expenseIds?: string[]
+): Promise<{ success: boolean; synced_count: number; message: string }> {
+  const response = await fetch(`${API_URL}/michael-expenses/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(expenseIds || null),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error syncing Michael expenses');
+  }
+  
   return response.json();
 }

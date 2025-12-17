@@ -97,6 +97,7 @@ const ExpensesYTD = () => {
   const [employeeFilterName, setEmployeeFilterName] = useState<string>('all');
   const [employeeDateFrom, setEmployeeDateFrom] = useState<string>('');
   const [employeeDateTo, setEmployeeDateTo] = useState<string>('');
+  const [employeeViewLoading, setEmployeeViewLoading] = useState(false);
   
   // Multi-select and editing states
   const [selectedExpenses, setSelectedExpenses] = useState<Set<string>>(new Set());
@@ -150,6 +151,42 @@ const ExpensesYTD = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Load data with date range for employee view (supports multi-year)
+  const loadEmployeeDataWithDateRange = useCallback(async () => {
+    if (!employeeDateFrom && !employeeDateTo) return;
+    
+    setEmployeeViewLoading(true);
+    try {
+      // When date range is set, load from API directly (ignores year filter)
+      const [expensesResult, byEmployeeResult] = await Promise.all([
+        getValorExpenses(undefined, undefined, undefined, undefined, employeeDateFrom || undefined, employeeDateTo || undefined),
+        getValorExpensesByEmployee(undefined, employeeDateFrom || undefined, employeeDateTo || undefined)
+      ]);
+      
+      setExpenses(expensesResult.expenses || []);
+      setExpensesByEmployee(byEmployeeResult.expenses || []);
+    } catch (error) {
+      console.error('Error loading data with date range:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load expenses data",
+        variant: "destructive",
+      });
+    } finally {
+      setEmployeeViewLoading(false);
+    }
+  }, [employeeDateFrom, employeeDateTo, toast]);
+
+  // Reload when date range changes (debounced)
+  useEffect(() => {
+    if (employeeDateFrom || employeeDateTo) {
+      const timer = setTimeout(() => {
+        loadEmployeeDataWithDateRange();
+      }, 500); // Debounce 500ms
+      return () => clearTimeout(timer);
+    }
+  }, [employeeDateFrom, employeeDateTo, loadEmployeeDataWithDateRange]);
 
   // Unique projects from expenses
   const uniqueProjects = useMemo(() => {
@@ -1102,7 +1139,12 @@ const ExpensesYTD = () => {
                     <Button 
                       variant="ghost" 
                       size="sm"
-                      onClick={() => { setEmployeeDateFrom(''); setEmployeeDateTo(''); }}
+                      onClick={() => { 
+                        setEmployeeDateFrom(''); 
+                        setEmployeeDateTo(''); 
+                        // Reload data for selected year
+                        loadData();
+                      }}
                     >
                       <X className="w-4 h-4 mr-1" />
                       Clear
@@ -1121,7 +1163,7 @@ const ExpensesYTD = () => {
                 )}
               </CardHeader>
               <CardContent className="p-0">
-                {isLoading ? (
+                {(isLoading || employeeViewLoading) ? (
                   <div className="flex items-center justify-center py-20">
                     <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
                   </div>

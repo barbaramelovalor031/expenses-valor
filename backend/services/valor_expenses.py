@@ -24,17 +24,27 @@ FULL_TABLE_ID = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
 
 def get_all_expenses(year: Optional[int] = None, month: Optional[int] = None, 
                      name: Optional[str] = None, category: Optional[str] = None,
+                     start_date: Optional[str] = None, end_date: Optional[str] = None,
                      limit: int = 5000) -> List[Dict[str, Any]]:
     """
-    Get all expenses with optional filters
+    Get all expenses with optional filters.
+    If start_date/end_date are provided, year filter is ignored.
     """
     client = get_bigquery_client()
     
     conditions = []
-    if year:
-        conditions.append(f"year = {year}")
-    if month:
-        conditions.append(f"month = {month}")
+    # Date range takes precedence over year/month
+    if start_date or end_date:
+        if start_date:
+            conditions.append(f"date >= '{start_date}'")
+        if end_date:
+            conditions.append(f"date <= '{end_date}'")
+    else:
+        if year:
+            conditions.append(f"year = {year}")
+        if month:
+            conditions.append(f"month = {month}")
+    
     if name:
         conditions.append(f"name = '{name}'")
     if category:
@@ -73,14 +83,25 @@ def get_all_expenses(year: Optional[int] = None, month: Optional[int] = None,
         return []
 
 
-def get_expenses_by_employee(year: Optional[int] = None) -> List[Dict[str, Any]]:
+def get_expenses_by_employee(year: Optional[int] = None, 
+                              start_date: Optional[str] = None, 
+                              end_date: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Get expenses aggregated by employee (name) and category
-    Similar to the old expenses_ytd format
+    Get expenses aggregated by employee (name) and category.
+    If start_date/end_date are provided, year filter is ignored.
     """
     client = get_bigquery_client()
     
-    where_clause = f"WHERE year = {year}" if year else ""
+    conditions = []
+    if start_date or end_date:
+        if start_date:
+            conditions.append(f"date >= '{start_date}'")
+        if end_date:
+            conditions.append(f"date <= '{end_date}'")
+    elif year:
+        conditions.append(f"year = {year}")
+    
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     
     query = f"""
         SELECT 

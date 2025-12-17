@@ -21,7 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Loader2, Trash2, Upload, FileSpreadsheet, Users, DollarSign, 
   RefreshCw, Calendar, AlertCircle, CheckCircle2, Database, Search,
-  Plus, Pencil, Save, X, TrendingUp, PieChart
+  Plus, Pencil, Save, X, TrendingUp, PieChart, Download
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -30,6 +30,7 @@ import {
   RipplingExpense, RipplingBatch, RipplingSummary, RipplingPreviewTransaction
 } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/api';
+import { PROJECT_OPTIONS } from '@/data/projects';
 
 // Available expense categories
 const EXPENSE_CATEGORIES = [
@@ -94,6 +95,8 @@ export default function RipplingExpensesPage() {
   const [filterEmployee, setFilterEmployee] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState<string>('');
+  const [filterDateTo, setFilterDateTo] = useState<string>('');
   
   // Upload state
   const [isParsing, setIsParsing] = useState(false);
@@ -111,6 +114,7 @@ export default function RipplingExpensesPage() {
   const [editingExpense, setEditingExpense] = useState<RipplingExpense | null>(null);
   const [editForm, setEditForm] = useState({ name: '', amount: '', category: '', date: '', project: '' });
   const [isSaving, setIsSaving] = useState(false);
+  const [savingProjectId, setSavingProjectId] = useState<string | null>(null);
   
   // Employee mapping state
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -145,6 +149,28 @@ export default function RipplingExpensesPage() {
     }
   }, [selectedYear, toast]);
 
+  // Load data with date range (when date filters are used)
+  const [dateRangeLoading, setDateRangeLoading] = useState(false);
+  
+  const loadDataWithDateRange = useCallback(async (startDate: string, endDate: string) => {
+    setDateRangeLoading(true);
+    try {
+      const expensesResult = await getRipplingExpenses(
+        undefined, // batchId
+        2000, // limit
+        undefined, // year - ignore when using date range
+        startDate,
+        endDate
+      );
+      setExpenses(expensesResult.expenses);
+    } catch (error) {
+      console.error('Error loading data with date range:', error);
+      toast({ title: 'Error', description: 'Failed to load data for date range', variant: 'destructive' });
+    } finally {
+      setDateRangeLoading(false);
+    }
+  }, [toast]);
+
   // Load employees
   const loadEmployees = async () => {
     setIsLoadingEmployees(true);
@@ -165,6 +191,16 @@ export default function RipplingExpensesPage() {
     loadEmployees();
   }, [loadData]);
 
+  // Debounced date range loading
+  useEffect(() => {
+    if (filterDateFrom && filterDateTo) {
+      const timeoutId = setTimeout(() => {
+        loadDataWithDateRange(filterDateFrom, filterDateTo);
+      }, 500);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [filterDateFrom, filterDateTo, loadDataWithDateRange]);
+
   // Filtered expenses
   const filteredExpenses = useMemo(() => {
     return expenses.filter(exp => {
@@ -173,9 +209,20 @@ export default function RipplingExpensesPage() {
       const matchesSearch = searchTerm === '' || 
         (exp.vendor_name && exp.vendor_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         exp.name.toLowerCase().includes(searchTerm.toLowerCase());
-      return matchesEmployee && matchesCategory && matchesSearch;
+      
+      // Date filtering
+      let matchesDateFrom = true;
+      let matchesDateTo = true;
+      if (filterDateFrom && exp.date) {
+        matchesDateFrom = exp.date >= filterDateFrom;
+      }
+      if (filterDateTo && exp.date) {
+        matchesDateTo = exp.date <= filterDateTo;
+      }
+      
+      return matchesEmployee && matchesCategory && matchesSearch && matchesDateFrom && matchesDateTo;
     });
-  }, [expenses, filterEmployee, filterCategory, searchTerm]);
+  }, [expenses, filterEmployee, filterCategory, searchTerm, filterDateFrom, filterDateTo]);
 
   // Unique values for filters
   const uniqueEmployees = useMemo(() => [...new Set(expenses.map(e => e.name))].sort(), [expenses]);
@@ -197,6 +244,52 @@ export default function RipplingExpensesPage() {
     
     return { totalAmount, topCategories, topEmployees };
   }, [filteredExpenses]);
+
+  // Export to CSV/XLSX
+  const exportToCSV = async () => {
+    if (filteredExpenses.length === 0) {
+      toast({ title: 'No data', description: 'No expenses to export', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      const XLSX = await import('xlsx');
+      
+      const rows = filteredExpenses.map(exp => ({
+        'Name': exp.name,
+        'Vendor': exp.vendor_name || '',
+        'Category': exp.category,
+        'Date': exp.date || '',
+        'Project': exp.project || '',
+        'Amount': exp.amount,
+      }));
+
+      // Build filename with filter info
+      const parts = ['rippling_expenses'];
+      if (filterEmployee !== 'all') parts.push(filterEmployee.replace(/\s+/g, '_'));
+      if (filterCategory !== 'all') parts.push(filterCategory.replace(/\s+/g, '_'));
+      if (filterDateFrom) parts.push(`from_${filterDateFrom}`);
+      if (filterDateTo) parts.push(`to_${filterDateTo}`);
+      const filename = parts.join('_');
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
+      XLSX.writeFile(wb, `${filename}.xlsx`);
+
+      toast({
+        title: 'Export complete!',
+        description: `Exported ${filteredExpenses.length} expenses`,
+      });
+    } catch (error) {
+      console.error('Export error:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not export data',
+        variant: 'destructive',
+      });
+    }
+  };
 
   // File upload handlers
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -314,7 +407,7 @@ export default function RipplingExpensesPage() {
       amount: expense.amount.toString(),
       category: expense.category,
       date: expense.date || '',
-      project: expense.project || '',
+      project: expense.project || '__none__',
     });
   };
 
@@ -328,7 +421,7 @@ export default function RipplingExpensesPage() {
         amount: parseFloat(editForm.amount),
         category: editForm.category,
         date: editForm.date || undefined,
-        project: editForm.project || undefined,
+        project: editForm.project === '__none__' ? undefined : (editForm.project || undefined),
       });
       toast({ title: 'Updated', description: 'Also synced to Consolidated Expenses.' });
       setEditingExpense(null);
@@ -558,25 +651,59 @@ export default function RipplingExpensesPage() {
             </div>
 
             {/* Filters */}
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap gap-3 items-end">
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9" />
               </div>
               <Select value={filterEmployee} onValueChange={setFilterEmployee}>
-                <SelectTrigger className="w-[180px]"><SelectValue placeholder="Employee" /></SelectTrigger>
+                <SelectTrigger className="w-[160px]"><SelectValue placeholder="Employee" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Employees</SelectItem>
                   {uniqueEmployees.map(e => <SelectItem key={e} value={e}>{e}</SelectItem>)}
                 </SelectContent>
               </Select>
               <Select value={filterCategory} onValueChange={setFilterCategory}>
-                <SelectTrigger className="w-[180px]"><SelectValue placeholder="Category" /></SelectTrigger>
+                <SelectTrigger className="w-[160px]"><SelectValue placeholder="Category" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Categories</SelectItem>
                   {uniqueCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <div className="flex items-center gap-2">
+                <Input 
+                  type="date" 
+                  value={filterDateFrom} 
+                  onChange={(e) => setFilterDateFrom(e.target.value)} 
+                  className="w-[145px] h-9" 
+                />
+                <span className="text-muted-foreground text-sm">to</span>
+                <Input 
+                  type="date" 
+                  value={filterDateTo} 
+                  onChange={(e) => setFilterDateTo(e.target.value)} 
+                  className="w-[145px] h-9" 
+                />
+                {(filterDateFrom || filterDateTo) && (
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    className="h-9 w-9"
+                    onClick={() => { 
+                      setFilterDateFrom(''); 
+                      setFilterDateTo(''); 
+                      // Reload data for selected year
+                      loadData();
+                    }}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
+              <Button variant="outline" size="sm" onClick={exportToCSV} className="h-9 ml-auto">
+                <Download className="w-4 h-4 mr-1" />
+                Export
+              </Button>
             </div>
 
             {/* Expenses Table */}
@@ -594,7 +721,7 @@ export default function RipplingExpensesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {isLoading ? (
+                  {(isLoading || dateRangeLoading) ? (
                     <TableRow><TableCell colSpan={7} className="text-center py-8"><RefreshCw className="w-6 h-6 animate-spin mx-auto" /></TableCell></TableRow>
                   ) : filteredExpenses.length === 0 ? (
                     <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No expenses found</TableCell></TableRow>
@@ -605,7 +732,39 @@ export default function RipplingExpensesPage() {
                         <TableCell className="text-muted-foreground">{exp.vendor_name || '-'}</TableCell>
                         <TableCell><Badge variant="secondary" className="text-xs">{exp.category}</Badge></TableCell>
                         <TableCell>{formatDate(exp.date)}</TableCell>
-                        <TableCell className="text-muted-foreground">{exp.project || '-'}</TableCell>
+                        <TableCell className="max-w-[150px]">
+                          <Select
+                            value={exp.project || '__none__'}
+                            onValueChange={(value) => {
+                              const projectValue = value === '__none__' ? '' : value;
+                              setSavingProjectId(exp.id);
+                              updateRipplingExpense(exp.id, { project: projectValue })
+                                .then(() => {
+                                  setExpenses(prev => prev.map(e => 
+                                    e.id === exp.id ? { ...e, project: projectValue || undefined } : e
+                                  ));
+                                  toast({ title: 'Project updated' });
+                                })
+                                .catch(() => toast({ title: 'Failed to update', variant: 'destructive' }))
+                                .finally(() => setSavingProjectId(null));
+                            }}
+                            disabled={savingProjectId === exp.id}
+                          >
+                            <SelectTrigger className="h-7 text-sm">
+                              {savingProjectId === exp.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <SelectValue placeholder="Select..." />
+                              )}
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">No project</SelectItem>
+                              {PROJECT_OPTIONS.map((proj) => (
+                                <SelectItem key={proj} value={proj}>{proj}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
                         <TableCell className="text-right font-medium">{formatCurrencyFull(exp.amount)}</TableCell>
                         <TableCell>
                           <div className="flex gap-1">
@@ -859,7 +1018,13 @@ export default function RipplingExpensesPage() {
               </div>
               <div>
                 <label className="text-sm font-medium">Project</label>
-                <Input value={editForm.project} onChange={(e) => setEditForm({...editForm, project: e.target.value})} placeholder="Project name" />
+                <Select value={editForm.project} onValueChange={(value) => setEditForm({...editForm, project: value})}>
+                  <SelectTrigger><SelectValue placeholder="Select project..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No project</SelectItem>
+                    {PROJECT_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-4">

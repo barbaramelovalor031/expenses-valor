@@ -271,6 +271,13 @@ def rule_based_category(description: str) -> Optional[str]:
     if any(keyword in desc_upper for keyword in RESTAURANT_GENERIC_KEYWORDS):
         return "Meals & Entertainment - Travel"
 
+    # --- In-flight WiFi / Internet (ANTES de Airfare para não ser pego pela regra de companhias aéreas) ---
+    # Detecta wifi/internet a bordo de companhias aéreas
+    inflight_wifi_keywords = ["WIFI", "WI-FI", "INTERNET", "IN FLIGHT", "INFLIGHT", "ONBOARD", "IN-FLIGHT"]
+    if any(air in desc_upper for air in AIRLINE_KEYWORDS):
+        if any(wifi in desc_upper for wifi in inflight_wifi_keywords):
+            return "Telephone/Internet"
+
     # --- Airfare ---
     if any(air in desc_upper for air in AIRLINE_KEYWORDS):
         return "Airfare"

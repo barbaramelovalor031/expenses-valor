@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { Car, Upload, FileSpreadsheet, X, Check, AlertCircle, TrendingUp, Users, MapPin, DollarSign, Clock, Navigation, Filter, RefreshCw, Download, Trash2, Edit2 } from 'lucide-react';
+import { Car, Upload, FileSpreadsheet, X, Check, AlertCircle, TrendingUp, Users, MapPin, DollarSign, Clock, Navigation, Filter, RefreshCw, Download, Trash2, Edit2, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -34,6 +34,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { API_BASE_URL, updateUberExpense, deleteUberExpensesBatch } from '@/lib/api';
+import { PROJECT_OPTIONS } from '@/data/projects';
 
 interface PreviewData {
   total_rows_in_csv: number;
@@ -94,6 +95,7 @@ const UberPage = () => {
   
   // Filters
   const [selectedUser, setSelectedUser] = useState<string>('all');
+  const [filterProject, setFilterProject] = useState<string>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   
@@ -109,6 +111,7 @@ const UberPage = () => {
   const [isDeletingBatch, setIsDeletingBatch] = useState(false);
   const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
+  const [savingProjectId, setSavingProjectId] = useState<string | null>(null);
   
   // Preview project values (editable per row)
   const [previewProjects, setPreviewProjects] = useState<Record<string, string>>({});
@@ -154,6 +157,15 @@ const UberPage = () => {
         return false;
       }
       
+      // Project filter
+      if (filterProject !== 'all') {
+        if (filterProject === '__none__') {
+          if (tx.project?.trim()) return false; // Has project, exclude
+        } else {
+          if (tx.project !== filterProject) return false;
+        }
+      }
+      
       // Date filters
       if (startDate || endDate) {
         const txDate = tx.transaction_timestamp_utc?.split(' ')[0];
@@ -165,7 +177,7 @@ const UberPage = () => {
       
       return true;
     });
-  }, [dashboardData, selectedUser, startDate, endDate]);
+  }, [dashboardData, selectedUser, filterProject, startDate, endDate]);
 
   // Filtered stats
   const filteredStats = useMemo(() => {
@@ -689,15 +701,23 @@ const UberPage = () => {
                                   <TableCell>{row.service}</TableCell>
                                   <TableCell className="text-muted-foreground">{row.program || '-'}</TableCell>
                                   <TableCell>
-                                    <Input
-                                      value={previewProjects[row.trip_eats_id] || ''}
-                                      onChange={(e) => setPreviewProjects(prev => ({
+                                    <Select
+                                      value={previewProjects[row.trip_eats_id] || '__none__'}
+                                      onValueChange={(value) => setPreviewProjects(prev => ({
                                         ...prev,
-                                        [row.trip_eats_id]: e.target.value
+                                        [row.trip_eats_id]: value === '__none__' ? '' : value
                                       }))}
-                                      placeholder="Enter project..."
-                                      className="h-8 text-sm min-w-[120px]"
-                                    />
+                                    >
+                                      <SelectTrigger className="h-8 text-sm min-w-[150px]">
+                                        <SelectValue placeholder="Select project..." />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__none__">No project</SelectItem>
+                                        {PROJECT_OPTIONS.map((proj) => (
+                                          <SelectItem key={proj} value={proj}>{proj}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   </TableCell>
                                   <TableCell className="max-w-[150px] truncate" title={row.pickup_address}>
                                     {row.pickup_address || '-'}
@@ -976,6 +996,20 @@ const UberPage = () => {
                       ))}
                     </SelectContent>
                   </Select>
+                  <Select value={filterProject} onValueChange={setFilterProject}>
+                    <SelectTrigger className="h-9 w-[180px]">
+                      <SelectValue placeholder="All projects" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Projects</SelectItem>
+                      <SelectItem value="__none__">No Project</SelectItem>
+                      {PROJECT_OPTIONS.map((proj) => (
+                        <SelectItem key={proj} value={proj}>
+                          {proj}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Input
                     type="date"
                     value={startDate}
@@ -1147,31 +1181,35 @@ const UberPage = () => {
                           </TableCell>
                           {/* Project - Editable */}
                           <TableCell>
-                            {editingCell?.id === tx.trip_eats_id && editingCell?.field === 'project' ? (
-                              <div className="flex items-center gap-1">
-                                <Input
-                                  value={editingValue}
-                                  onChange={(e) => setEditingValue(e.target.value)}
-                                  onKeyDown={handleEditKeyDown}
-                                  className="h-7 w-24"
-                                  autoFocus
-                                />
-                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={saveEditing}>
-                                  <Check className="h-3 w-3 text-green-600" />
-                                </Button>
-                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={cancelEditing}>
-                                  <X className="h-3 w-3 text-red-600" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <span 
-                                className="cursor-pointer hover:underline"
-                                onClick={() => startEditing(tx.trip_eats_id, 'project', tx.project || '')}
-                                title="Click to edit"
-                              >
-                                {tx.project || '-'}
-                              </span>
-                            )}
+                            <Select
+                              value={tx.project || '__none__'}
+                              onValueChange={(value) => {
+                                const projectValue = value === '__none__' ? '' : value;
+                                setSavingProjectId(tx.trip_eats_id);
+                                updateUberExpense(tx.trip_eats_id, { project: projectValue || undefined })
+                                  .then(() => {
+                                    loadDashboard();
+                                    toast({ title: 'Project updated' });
+                                  })
+                                  .catch(() => toast({ title: 'Failed to update', variant: 'destructive' }))
+                                  .finally(() => setSavingProjectId(null));
+                              }}
+                              disabled={savingProjectId === tx.trip_eats_id}
+                            >
+                              <SelectTrigger className="h-7 w-[150px]">
+                                {savingProjectId === tx.trip_eats_id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <SelectValue placeholder="Select..." />
+                                )}
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">No project</SelectItem>
+                                {PROJECT_OPTIONS.map((proj) => (
+                                  <SelectItem key={proj} value={proj}>{proj}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </TableCell>
                           <TableCell className="text-right font-mono">
                             {tx.amount_usd ? formatCurrency(tx.amount_usd, 'USD') : '-'}

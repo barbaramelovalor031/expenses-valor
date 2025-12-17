@@ -1,4 +1,4 @@
-import { CreditCard, Users, Wallet, Car, BarChart3, History, FileSpreadsheet, Plane } from 'lucide-react';
+import { CreditCard, Users, Wallet, Car, BarChart3, History, FileSpreadsheet, Plane, Monitor } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
@@ -32,6 +32,11 @@ const menuItems = [
     name: 'Travel Dashboard',
     path: '/travel',
     icon: Plane,
+  },
+  {
+    name: 'IT Subscriptions',
+    path: '/it-subscriptions',
+    icon: Monitor,
   },
 ];
 

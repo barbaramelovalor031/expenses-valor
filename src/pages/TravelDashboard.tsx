@@ -100,6 +100,7 @@ const TravelDashboard = () => {
   const [filterDateFrom, setFilterDateFrom] = useState<string>('');
   const [filterDateTo, setFilterDateTo] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [dateRangeLoading, setDateRangeLoading] = useState(false);
   
   // Filters for By Employee tab
   const [byEmpFilterEmployee, setByEmpFilterEmployee] = useState<string>('all');
@@ -126,9 +127,44 @@ const TravelDashboard = () => {
     }
   }, [selectedYear, toast]);
 
+  // Load data with date range (when date filters are used)
+  const loadDataWithDateRange = useCallback(async (startDate: string, endDate: string) => {
+    setDateRangeLoading(true);
+    try {
+      const result = await getValorExpenses(
+        undefined, // year - ignore when using date range
+        undefined, // month
+        undefined, // name
+        undefined, // category
+        startDate,
+        endDate
+      );
+      setAllExpenses(result.expenses || []);
+    } catch (error) {
+      console.error('Error loading data with date range:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load travel data for date range",
+        variant: "destructive",
+      });
+    } finally {
+      setDateRangeLoading(false);
+    }
+  }, [toast]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Debounced date range loading
+  useEffect(() => {
+    if (filterDateFrom && filterDateTo) {
+      const timeoutId = setTimeout(() => {
+        loadDataWithDateRange(filterDateFrom, filterDateTo);
+      }, 500);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [filterDateFrom, filterDateTo, loadDataWithDateRange]);
 
   // Filter only travel-related expenses
   const travelExpenses = useMemo(() => {
@@ -347,12 +383,16 @@ const TravelDashboard = () => {
     setFilterDateFrom('');
     setFilterDateTo('');
     setSearchTerm('');
+    // Reload data for selected year when date filters are cleared
+    loadData();
   };
 
   const clearByEmpFilters = () => {
     setByEmpFilterEmployee('all');
     setByEmpDateFrom('');
     setByEmpDateTo('');
+    // Reload data for selected year when date filters are cleared
+    loadData();
   };
 
   return (
@@ -770,7 +810,7 @@ const TravelDashboard = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {isLoading ? (
+                  {(isLoading || dateRangeLoading) ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-8">
                         <RefreshCw className="w-6 h-6 animate-spin mx-auto" />

@@ -28,6 +28,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { PROJECT_OPTIONS } from '@/data/projects';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useState, useMemo, useRef, useCallback } from 'react';
 import { categorizeTransactions, addCreditCardDashboardExpensesBatch, AddCreditCardDashboardExpense } from '@/lib/api';
@@ -77,7 +78,8 @@ const AVAILABLE_USERS = [
   "Paulo Passoni",
   "Antoine Colaco",
   "Carlos Costa",
-  "Kelli SpanglerBallard",
+  "Daniel Schulman",
+  "Kelli Spangler-Ballard",
 ];
 
 // Alias mappings for user names (lowercase key -> canonical name)
@@ -93,7 +95,10 @@ const USER_ALIASES: Record<string, string> = {
   // Antoine variations
   "antoine colaço": "Antoine Colaco",
   // Kelli variations
-  "kelli spangler": "Kelli SpanglerBallard",
+  "kelli spangler": "Kelli Spangler-Ballard",
+  "kelli spanglerballard": "Kelli Spangler-Ballard",
+  // Daniel variations
+  "dan schulman": "Daniel Schulman",
 };
 
 // Helper to find canonical user name (case-insensitive + aliases)
@@ -300,6 +305,7 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
   // Handle project change - debounced
   const projectTimeoutRef = useRef<Record<number, NodeJS.Timeout>>({});
   const handleProjectChange = useCallback((index: number, project: string) => {
+    const projectValue = project === '__none__' ? '' : project;
     // Clear previous timeout for this index
     if (projectTimeoutRef.current[index]) {
       clearTimeout(projectTimeoutRef.current[index]);
@@ -311,7 +317,7 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
       if (txIndex !== -1) {
         updatedTransactions[txIndex] = {
           ...updatedTransactions[txIndex],
-          project,
+          project: projectValue,
         };
         setTransactions(updatedTransactions);
         onUpdateTransactions?.(updatedTransactions);
@@ -835,12 +841,6 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
                                 {user}
                               </SelectItem>
                             ))}
-                            {/* Also show current user if not in list (case-insensitive check) */}
-                            {transaction.category && !AVAILABLE_USERS.some(u => u.toLowerCase() === transaction.category?.toLowerCase()) && (
-                              <SelectItem value={transaction.category}>
-                                {transaction.category}
-                              </SelectItem>
-                            )}
                           </SelectContent>
                         </Select>
                       </TableCell>
@@ -884,13 +884,20 @@ export function InvoiceViewer({ invoice, onClose, originalFile, onUpdateTransact
                     )}
                     {showCategories && (
                       <TableCell>
-                        <Input
-                          type="text"
-                          placeholder="Add project..."
-                          defaultValue={transaction.project || ''}
-                          onChange={(e) => handleProjectChange(index, e.target.value)}
-                          className="w-[120px] h-8 text-xs"
-                        />
+                        <Select
+                          value={transaction.project || '__none__'}
+                          onValueChange={(value) => handleProjectChange(index, value)}
+                        >
+                          <SelectTrigger className="w-[150px] h-8 text-xs">
+                            <SelectValue placeholder="Select project..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">No project</SelectItem>
+                            {PROJECT_OPTIONS.map((proj) => (
+                              <SelectItem key={proj} value={proj}>{proj}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                     )}
                     <TableCell className="text-right font-medium text-foreground">

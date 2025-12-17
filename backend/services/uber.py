@@ -31,6 +31,21 @@ PTAX_CACHE = {}
 # get_bigquery_client is now imported from bigquery_client module
 
 
+def ensure_project_column():
+    """Ensure the project column exists in uber_expenses table."""
+    try:
+        client = get_bigquery_client()
+        query = f"""
+        ALTER TABLE `{FULL_TABLE_ID}`
+        ADD COLUMN IF NOT EXISTS project STRING
+        """
+        client.query(query).result()
+        return True
+    except Exception as e:
+        print(f"Note when checking project column: {e}")
+        return False
+
+
 def get_cotacao_dolar_ptax(data_iso: str) -> Optional[float]:
     """
     Busca cotação do dólar PTAX do Banco Central.
@@ -545,6 +560,9 @@ def get_uber_dashboard_data() -> Dict[str, Any]:
     """
     Busca dados agregados do BigQuery para o dashboard
     """
+    # Ensure the project column exists
+    ensure_project_column()
+    
     client = get_bigquery_client()
     
     # Query para dados do dashboard
@@ -652,7 +670,8 @@ def get_uber_dashboard_data() -> Dict[str, Any]:
                 ROUND(SAFE_CAST(transaction_amount_usd AS FLOAT64), 2) as amount_usd,
                 ROUND(SAFE_CAST(ptax_rate AS FLOAT64), 4) as ptax_rate,
                 ROUND(SAFE_CAST(distance_mi AS FLOAT64), 2) as distance_mi,
-                ROUND(SAFE_CAST(duration_min AS FLOAT64), 0) as duration_min
+                ROUND(SAFE_CAST(duration_min AS FLOAT64), 0) as duration_min,
+                COALESCE(project, '') as project
             FROM `{FULL_TABLE_ID}`
             WHERE trip_eats_id IS NOT NULL
             ORDER BY transaction_timestamp_utc DESC

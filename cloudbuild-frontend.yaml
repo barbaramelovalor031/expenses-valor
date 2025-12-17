@@ -1,0 +1,47 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'VITE_API_URL=https://expenses-backend-569770171583.us-central1.run.app'
+      - '--build-arg'
+      - 'VITE_FIREBASE_API_KEY=AIzaSyBYeNfks3UPlhK5Hv_1p3HfsVoZ170aqC0'
+      - '--build-arg'
+      - 'VITE_FIREBASE_AUTH_DOMAIN=automatic-bond-462415-h6.firebaseapp.com'
+      - '--build-arg'
+      - 'VITE_FIREBASE_PROJECT_ID=automatic-bond-462415-h6'
+      - '--build-arg'
+      - 'VITE_FIREBASE_STORAGE_BUCKET=automatic-bond-462415-h6.firebasestorage.app'
+      - '--build-arg'
+      - 'VITE_FIREBASE_MESSAGING_SENDER_ID=569770171583'
+      - '--build-arg'
+      - 'VITE_FIREBASE_APP_ID=1:569770171583:web:be16dab084e2ad67653a0a'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/expenses-frontend:v6-firebase'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/expenses-frontend:v6-firebase'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'expenses-frontend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/expenses-frontend:v6-firebase'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '8080'
+
+images:
+  - 'gcr.io/$PROJECT_ID/expenses-frontend:v6-firebase'
+
+timeout: '1200s'

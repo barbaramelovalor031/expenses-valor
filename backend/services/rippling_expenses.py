@@ -311,14 +311,19 @@ def upload_rippling_expenses(transactions: List[Dict], year: int = None) -> Dict
         return {"success": False, "error": str(e)}
 
 
-def get_rippling_expenses(batch_id: Optional[str] = None, year: Optional[int] = None, limit: int = 1000) -> List[Dict]:
+def get_rippling_expenses(batch_id: Optional[str] = None, year: Optional[int] = None, limit: int = 1000, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict]:
     """Busca despesas do Rippling"""
     client = get_bigquery_client()
     
     conditions = []
     if batch_id:
         conditions.append(f"batch_id = '{batch_id}'")
-    if year:
+    
+    # If date range is provided, ignore year filter
+    if start_date and end_date:
+        conditions.append(f"date >= '{start_date}'")
+        conditions.append(f"date <= '{end_date}'")
+    elif year:
         conditions.append(f"year = {year}")
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""

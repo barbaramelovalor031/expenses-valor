@@ -19,7 +19,12 @@ from extractors.amex import extract_amex
 from extractors.bradesco import extract_bradesco
 from services.categorizer import categorize_transactions, EXPENSE_CATEGORIES
 from services.rippling import process_rippling_file, export_rippling_to_excel
-from services.michael import process_michael_file, categorize_michael_transactions, export_michael_to_excel
+from services.michael import (
+    process_michael_file, categorize_michael_transactions, export_michael_to_excel,
+    get_michael_expenses, get_michael_batches, add_michael_expenses_to_db,
+    update_michael_expense, delete_michael_expense, delete_michael_batch,
+    sync_michael_to_valor, get_michael_summary
+)
 from services.uber import process_uber_csv, upload_new_rows_to_bigquery, get_uber_dashboard_data
 from services.rippling_employees import (
     get_all_employees, get_unique_display_names, add_employee, 
@@ -79,6 +84,11 @@ from services.valor_expenses import (
     clear_vendor_for_credit_card_expenses,
     fix_category_case,
     export_consolidated_by_category
+)
+from services.it_subscriptions import (
+    get_it_subscriptions,
+    extract_vendors_for_expenses,
+    get_it_subscriptions_summary
 )
 
 app = FastAPI(
@@ -554,6 +564,103 @@ async def export_michael(request: MichaelCategorizeRequest):
 
 
 # =====================================================
+# MICHAEL CARD DATABASE ENDPOINTS
+# =====================================================
+
+class MichaelExpenseInput(BaseModel):
+    date: str
+    description: str
+    card_member: Optional[str] = "Michael Nicklas"
+    amount: float
+    category: str
+    project: Optional[str] = ""
+
+class MichaelExpenseUpdate(BaseModel):
+    category: Optional[str] = None
+    project: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    date: Optional[str] = None
+
+class MichaelExpensesBatchInput(BaseModel):
+    expenses: List[MichaelExpenseInput]
+
+@app.get("/michael-expenses")
+async def get_michael_expenses_endpoint(year: int = None, limit: int = 1000):
+    """Get all Michael expenses."""
+    try:
+        expenses = get_michael_expenses(year=year, limit=limit)
+        return {"expenses": expenses, "count": len(expenses)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/michael-expenses/batches")
+async def get_michael_batches_endpoint():
+    """Get all Michael expense batches."""
+    try:
+        batches = get_michael_batches()
+        return {"batches": batches}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/michael-expenses/summary")
+async def get_michael_summary_endpoint(year: int = None):
+    """Get Michael expenses summary."""
+    try:
+        summary = get_michael_summary(year=year)
+        return summary
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/michael-expenses")
+async def add_michael_expenses_endpoint(data: MichaelExpensesBatchInput):
+    """Add batch of Michael expenses."""
+    try:
+        expenses = [exp.model_dump() for exp in data.expenses]
+        result = add_michael_expenses_to_db(expenses)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/michael-expenses/{expense_id}")
+async def update_michael_expense_endpoint(expense_id: str, updates: MichaelExpenseUpdate):
+    """Update a Michael expense."""
+    try:
+        updates_dict = {k: v for k, v in updates.model_dump().items() if v is not None}
+        result = update_michael_expense(expense_id, updates_dict)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/michael-expenses/{expense_id}")
+async def delete_michael_expense_endpoint(expense_id: str):
+    """Delete a Michael expense."""
+    try:
+        result = delete_michael_expense(expense_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/michael-expenses/batches/{batch_id}")
+async def delete_michael_batch_endpoint(batch_id: str):
+    """Delete a Michael expense batch."""
+    try:
+        result = delete_michael_batch(batch_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/michael-expenses/sync")
+async def sync_michael_to_valor_endpoint(expense_ids: Optional[List[str]] = None):
+    """Sync Michael expenses to consolidated expenses."""
+    try:
+        result = sync_michael_to_valor(expense_ids)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================================================
 # UBER ENDPOINTS
 # =====================================================
 
@@ -616,6 +723,7 @@ class UberExpenseUpdate(BaseModel):
     category: Optional[str] = None
     amount: Optional[float] = None
     vendor: Optional[str] = None
+    project: Optional[str] = None
 
 
 @app.put("/uber/expense/{trip_id}")
@@ -940,11 +1048,14 @@ async def list_valor_expenses(
     month: int = None,
     name: str = None,
     category: str = None,
+    start_date: str = None,
+    end_date: str = None,
     limit: int = 5000
 ):
     """List all expenses from valor_expenses table with optional filters"""
     try:
-        expenses = get_valor_expenses(year=year, month=month, name=name, category=category, limit=limit)
+        expenses = get_valor_expenses(year=year, month=month, name=name, category=category, 
+                                       start_date=start_date, end_date=end_date, limit=limit)
         return JSONResponse(content={
             "success": True,
             "expenses": expenses,
@@ -955,10 +1066,10 @@ async def list_valor_expenses(
 
 
 @app.get("/valor-expenses/by-employee")
-async def list_valor_by_employee(year: int = None):
+async def list_valor_by_employee(year: int = None, start_date: str = None, end_date: str = None):
     """Get expenses aggregated by employee and category (for pivot table view)"""
     try:
-        expenses = get_valor_by_employee(year=year)
+        expenses = get_valor_by_employee(year=year, start_date=start_date, end_date=end_date)
         return JSONResponse(content={
             "success": True,
             "expenses": expenses,
@@ -1917,10 +2028,10 @@ async def confirm_rippling_upload(request: Request):
 
 
 @app.get("/rippling-expenses")
-async def get_rippling_expenses_list(batch_id: Optional[str] = None, year: Optional[int] = None, limit: int = 1000):
-    """Get Rippling expenses, optionally filtered by batch or year"""
+async def get_rippling_expenses_list(batch_id: Optional[str] = None, year: Optional[int] = None, limit: int = 1000, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    """Get Rippling expenses, optionally filtered by batch, year, or date range"""
     try:
-        expenses = get_rippling_expenses(batch_id=batch_id, year=year, limit=limit)
+        expenses = get_rippling_expenses(batch_id=batch_id, year=year, limit=limit, start_date=start_date, end_date=end_date)
         return JSONResponse(content={"expenses": expenses, "count": len(expenses)})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching expenses: {str(e)}")
@@ -2014,6 +2125,49 @@ async def resync_rippling_to_valor_endpoint():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao sincronizar: {str(e)}")
+
+
+# ===========================================
+# IT SUBSCRIPTIONS ENDPOINTS
+# ===========================================
+
+@app.get("/it-subscriptions")
+async def get_it_subscriptions_endpoint(year: int = None, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    """Get all IT Subscriptions expenses for a given year or date range"""
+    try:
+        expenses = get_it_subscriptions(year, start_date, end_date)
+        return JSONResponse(content={"expenses": expenses})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching IT subscriptions: {str(e)}")
+
+
+@app.get("/it-subscriptions/summary")
+async def get_it_subscriptions_summary_endpoint(year: int = None):
+    """Get summary statistics for IT Subscriptions"""
+    try:
+        summary = get_it_subscriptions_summary(year)
+        return JSONResponse(content=summary)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching IT subscriptions summary: {str(e)}")
+
+
+@app.post("/it-subscriptions/extract-vendors")
+async def extract_vendors_endpoint(request: Request):
+    """Extract vendors from IT Subscription expense descriptions using AI"""
+    try:
+        body = await request.json()
+        expense_ids = body.get("expense_ids", None)
+        
+        results = extract_vendors_for_expenses(expense_ids)
+        
+        return JSONResponse(content={
+            "success": True,
+            "results": results,
+            "processed_count": len(results),
+            "updated_count": len([r for r in results if r["status"] == "updated"])
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error extracting vendors: {str(e)}")
 
 
 if __name__ == "__main__":

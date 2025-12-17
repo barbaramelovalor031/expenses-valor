@@ -4,6 +4,7 @@ import { FileUploadZone } from '@/components/FileUploadZone';
 import { InvoiceList } from '@/components/InvoiceList';
 import { InvoiceViewer } from '@/components/InvoiceViewer';
 import { creditCards } from '@/data/creditCards';
+import { PROJECT_OPTIONS } from '@/data/projects';
 import { ExtractedInvoice, Transaction } from '@/types/invoice';
 import { useToast } from '@/hooks/use-toast';
 import { extractPDF, getCreditCardDashboard, deleteCreditCardDashboardExpense, deleteCreditCardExpensesBatch, updateCreditCardDashboardExpense, syncCreditCardToValor, uploadCreditCardExcel, previewCreditCardExcel, addCreditCardExpensesBatch, CreditCardDashboardExpense, ExcelPreviewExpense } from '@/lib/api';
@@ -31,7 +32,8 @@ const VALID_USERS = [
   "Paulo Passoni",
   "Antoine Colaco",
   "Carlos Costa",
-  "Kelli SpanglerBallard",
+  "Daniel Schulman",
+  "Kelli Spangler-Ballard",
 ];
 
 // Lista de categorias válidas (inclui Firm Uber para casos especiais)
@@ -93,6 +95,7 @@ const Index = () => {
   const [filterCard, setFilterCard] = useState<string>('all');
   const [filterUser, setFilterUser] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [filterProject, setFilterProject] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<CreditCardDashboardExpense | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -102,6 +105,7 @@ const Index = () => {
   // Inline editing state
   const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
+  const [savingProjectId, setSavingProjectId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // Excel preview state
   const [previewData, setPreviewData] = useState<ExcelPreviewExpense[]>([]);
@@ -286,6 +290,13 @@ const Index = () => {
       if (filterYear !== 'all' && exp.year !== parseInt(filterYear)) return false;
       if (filterCard !== 'all' && exp.credit_card !== filterCard) return false;
       if (filterUser !== 'all' && exp.user !== filterUser) return false;
+      if (filterProject !== 'all') {
+        if (filterProject === '__none__') {
+          if (exp.project?.trim()) return false; // Has project, exclude
+        } else {
+          if (exp.project !== filterProject) return false;
+        }
+      }
       if (filterCategory !== 'all') {
         if (filterCategory === '__empty__') {
           if (exp.category?.trim()) return false; // Has category, exclude
@@ -311,7 +322,7 @@ const Index = () => {
       }
       return true;
     });
-  }, [expenses, filterYear, filterCard, filterUser, filterCategory, searchTerm]);
+  }, [expenses, filterYear, filterCard, filterUser, filterCategory, filterProject, searchTerm]);
 
   // Available filter options
   const availableYears = useMemo(() => {
@@ -803,6 +814,19 @@ const Index = () => {
                     ))}
                   </SelectContent>
                 </Select>
+
+                <Select value={filterProject} onValueChange={setFilterProject}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Project" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Projects</SelectItem>
+                    <SelectItem value="__none__">No Project</SelectItem>
+                    {PROJECT_OPTIONS.map(proj => (
+                      <SelectItem key={proj} value={proj}>{proj}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </CardContent>
           </Card>
@@ -1019,25 +1043,39 @@ const Index = () => {
                           </TableCell>
                           {/* Project - Editable */}
                           <TableCell 
-                            className="max-w-[120px] cursor-pointer hover:bg-muted/50"
-                            onClick={() => startInlineEdit(expense, 'project')}
-                            title={expense.project || ''}
+                            className="max-w-[150px]"
                           >
-                            {editingCell?.id === expense.id && editingCell?.field === 'project' ? (
-                              <Input
-                                ref={inputRef}
-                                defaultValue={editingValue}
-                                onKeyDown={(e) => handleInlineKeyDown(e, expense)}
-                                onBlur={() => saveInlineEdit(expense)}
-                                autoFocus
-                                className="h-7 text-sm"
-                                placeholder="Add project..."
-                              />
-                            ) : (
-                              <span className="truncate block text-sm text-muted-foreground">
-                                {expense.project || '-'}
-                              </span>
-                            )}
+                            <Select
+                              value={expense.project || '__none__'}
+                              onValueChange={(value) => {
+                                const projectValue = value === '__none__' ? '' : value;
+                                setSavingProjectId(expense.id);
+                                updateCreditCardDashboardExpense(expense.id, { project: projectValue || undefined })
+                                  .then(() => {
+                                    setExpenses(prev => prev.map(e => 
+                                      e.id === expense.id ? { ...e, project: projectValue || undefined } : e
+                                    ));
+                                    toast({ title: 'Project updated' });
+                                  })
+                                  .catch(() => toast({ title: 'Failed to update', variant: 'destructive' }))
+                                  .finally(() => setSavingProjectId(null));
+                              }}
+                              disabled={savingProjectId === expense.id}
+                            >
+                              <SelectTrigger className="h-7 text-sm">
+                                {savingProjectId === expense.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <SelectValue placeholder="Select..." />
+                                )}
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">No project</SelectItem>
+                                {PROJECT_OPTIONS.map((proj) => (
+                                  <SelectItem key={proj} value={proj}>{proj}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </TableCell>
                           <TableCell className="text-center">
                             {expense.synced_to_valor ? (
